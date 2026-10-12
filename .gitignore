@@ -3,8 +3,10 @@ dist
 .env
 .env.local
 .vite
-README.md
+/public/products
+schema.sql
 schema_update.sql
 schema_update_2.sql
 schema_update_3.sql
-schema.sql
+schema_update_4.sql
+README.md

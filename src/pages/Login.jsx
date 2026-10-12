@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../supabase'
 import PasswordInput from '../components/PasswordInput'
+import Icon from '../components/Icon'
 
 async function findEmail(usernameOrEmail) {
   const value = usernameOrEmail.trim()
@@ -86,21 +87,28 @@ export default function Login() {
     forgot: ['Reset password', 'Enter your username or email and we will send a reset link.'],
   }
 
+  const features = [
+    { icon: 'box', title: 'Live stock levels', text: 'See what is in stock and what is running low.' },
+    { icon: 'receipt', title: 'Orders and invoices', text: 'Create an order and get a PDF invoice in seconds.' },
+    { icon: 'users', title: 'One shared record', text: 'Every sale, who made it and when, in one place.' },
+  ]
+
   const inputClass =
-    'w-full rounded-full border border-slate-300/80 bg-[#F4F2EC]/90 px-6 py-4 text-base text-[#0F172A] outline-none transition placeholder:text-slate-400 focus:border-[#1E293B] focus:bg-white focus:ring-4 focus:ring-slate-200/70'
+    'w-full rounded-full border border-slate-200 bg-slate-50 px-6 py-4 text-base text-[#0F172A] outline-none transition placeholder:text-slate-400 focus:border-[#1f74b0] focus:bg-white focus:ring-4 focus:ring-[#1f74b0]/15'
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#FDFBF9] lg:p-8">
-      <div className="relative w-full overflow-hidden bg-gradient-to-br from-white to-[#FAF9F6] lg:min-h-[700px] lg:max-w-6xl lg:rounded-[32px] lg:shadow-[0_40px_80px_-20px_rgba(15,23,42,0.28),0_18px_36px_-18px_rgba(15,23,42,0.22)]">
-        <img src="/login-art.jpg" alt=""
-          className="absolute inset-0 h-full w-full object-cover lg:left-auto lg:right-0 lg:w-[62%] lg:[-webkit-mask-image:linear-gradient(to_right,transparent,black_24%)] lg:[mask-image:linear-gradient(to_right,transparent,black_24%)]" />
+    <div className="flex min-h-screen items-center justify-center bg-[#F8FAFC] lg:p-8">
+      <div className="grid w-full overflow-hidden bg-white lg:min-h-[680px] lg:max-w-5xl lg:grid-cols-2 lg:rounded-[32px] lg:shadow-[0_40px_80px_-24px_rgba(15,23,42,0.3),0_16px_32px_-16px_rgba(15,23,42,0.2)]">
 
-        <div className="relative z-10 flex min-h-screen items-center justify-center p-5 lg:min-h-[700px] lg:w-[42%] lg:p-10">
-          <form onSubmit={handleSubmit}
-            className="w-full max-w-sm rounded-[32px] border border-white/70 bg-white/55 p-7 shadow-[0_24px_60px_-12px_rgba(15,23,42,0.4)] backdrop-blur-xl lg:rounded-none lg:border-0 lg:bg-transparent lg:p-0 lg:shadow-none lg:backdrop-blur-none">
-            <img src="/logo.png" alt="Working For God Ventures" className="mx-auto mb-6 h-14 w-14 drop-shadow-md" />
-            <h1 className="text-center text-3xl font-bold tracking-tight text-[#0F172A] lg:text-4xl">{titles[mode][0]}</h1>
-            <p className="mt-2 text-center text-sm text-slate-500">{titles[mode][1]}</p>
+        <div className="flex items-center gap-3 bg-gradient-to-r from-[#0b2a4a] to-[#1f74b0] px-6 py-5 lg:hidden">
+          <img src="/logo.png" alt="" className="h-11 w-11 rounded-full bg-white p-0.5" />
+          <div className="font-bold leading-tight text-white">Working For God Ventures</div>
+        </div>
+
+        <div className="flex flex-col justify-center px-6 py-10 sm:px-12 lg:px-14">
+          <form onSubmit={handleSubmit} className="mx-auto w-full max-w-sm">
+            <h1 className="text-3xl font-extrabold tracking-tight text-[#0F172A] lg:text-4xl">{titles[mode][0]}</h1>
+            <p className="mt-2 text-sm text-slate-500">{titles[mode][1]}</p>
 
             <div className="mt-8 space-y-4">
               {mode === 'signup' && (
@@ -129,7 +137,7 @@ export default function Login() {
             {notice && <div className="mt-4 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">{notice}</div>}
 
             <button disabled={busy}
-              className="mt-6 w-full rounded-full bg-[#1E293B] py-4 text-base font-semibold text-white shadow-lg shadow-slate-900/25 transition hover:bg-[#0F172A] disabled:opacity-60">
+              className="mt-6 w-full rounded-full bg-[#0b2a4a] py-4 text-base font-semibold text-white shadow-lg shadow-[#0b2a4a]/25 transition hover:bg-[#123a63] disabled:opacity-60">
               {busy ? 'Please wait...' : mode === 'login' ? 'Log in' : mode === 'signup' ? 'Request access' : 'Send reset link'}
             </button>
 
@@ -140,7 +148,7 @@ export default function Login() {
                     Forgot login or password?
                   </button>
                   <button type="button" onClick={() => switchMode('signup')} className="block w-full py-1 hover:text-[#0F172A]">
-                    New here? <span className="font-semibold text-[#1E293B]">Request access</span>
+                    New here? <span className="font-semibold text-[#1f74b0]">Request access</span>
                   </button>
                 </>
               ) : (
@@ -150,6 +158,49 @@ export default function Login() {
               )}
             </div>
           </form>
+        </div>
+
+        <div className="relative hidden flex-col justify-between overflow-hidden bg-gradient-to-br from-[#0b2a4a] via-[#124a7c] to-[#1f74b0] p-12 text-white lg:flex">
+          <div className="absolute -right-28 -top-28 h-80 w-80 rounded-full bg-white/10" />
+          <div className="absolute -right-10 -top-10 h-48 w-48 rounded-full border border-white/20" />
+          <div className="absolute -bottom-36 -left-24 h-96 w-96 rounded-full bg-white/5" />
+          <div className="absolute -bottom-16 -left-6 h-60 w-60 rounded-full border border-white/15" />
+          <div className="absolute inset-0 opacity-60"
+            style={{
+              backgroundImage: 'radial-gradient(rgba(255,255,255,.14) 1px, transparent 1px)',
+              backgroundSize: '24px 24px',
+              WebkitMaskImage: 'linear-gradient(to bottom right, transparent 30%, black)',
+              maskImage: 'linear-gradient(to bottom right, transparent 30%, black)',
+            }} />
+
+          <div className="relative">
+            <img src="/logo.png" alt="Working For God Ventures" className="h-20 w-20 rounded-full bg-white p-1 shadow-xl shadow-black/20" />
+            <h2 className="mt-8 text-4xl font-extrabold leading-tight tracking-tight">
+              Working For God<br />Ventures
+            </h2>
+            <div className="mt-4 flex gap-1.5">
+              <span className="h-1.5 w-10 rounded-full bg-[#a3d65c]" />
+              <span className="h-1.5 w-6 rounded-full bg-[#e0334c]" />
+              <span className="h-1.5 w-3 rounded-full bg-white/70" />
+            </div>
+            <p className="mt-5 max-w-sm text-sm leading-relaxed text-blue-100">
+              Mindray specialists. Lab equipment, reagents and hands-on training for laboratory teams.
+            </p>
+          </div>
+
+          <div className="relative space-y-3">
+            {features.map((f) => (
+              <div key={f.title} className="flex items-start gap-4 rounded-2xl border border-white/15 bg-white/10 p-4 backdrop-blur-sm">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/15">
+                  <Icon name={f.icon} size={20} />
+                </div>
+                <div>
+                  <div className="text-sm font-semibold">{f.title}</div>
+                  <div className="text-xs text-blue-100">{f.text}</div>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
