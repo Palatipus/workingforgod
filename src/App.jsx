@@ -9,6 +9,7 @@ import Dashboard from './pages/Dashboard'
 import Inventory from './pages/Inventory'
 import NewOrder from './pages/NewOrder'
 import Orders from './pages/Orders'
+import Customers from './pages/Customers'
 
 export default function App() {
   const { session, profile, loading, profileReady, recovering } = useAuth()
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/orders" element={<Orders />} />
         <Route path="/orders/new" element={<NewOrder />} />
         <Route path="/inventory" element={<Inventory />} />
+        <Route path="/customers" element={<Customers />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Route>
     </Routes>

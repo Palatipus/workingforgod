@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
-import { money, stockStatus } from '../format'
-import { downloadInvoice } from '../invoice'
+import { money, stockStatus, paymentMethods } from '../format'
+import { downloadInvoice, shareInvoice, invoiceNumber, invoiceTotals } from '../invoice'
 
 function StepBar({ step }) {
   const names = ['Customer', 'Items', 'Review']
@@ -24,7 +24,12 @@ function StepBar({ step }) {
   )
 }
 
-function CustomerStep({ customers, onPick }) {
+function validQty(value) {
+  const qty = Number(value)
+  return Number.isInteger(qty) && qty >= 1
+}
+
+function CustomerStep({ customers, owedBy, onPick }) {
   const [mode, setMode] = useState('existing')
   const [selectedId, setSelectedId] = useState('')
   const [form, setForm] = useState({ name: '', phone: '', location: '' })
@@ -47,6 +52,8 @@ function CustomerStep({ customers, onPick }) {
     onPick(data)
   }
 
+  const selectedOwes = owedBy[selectedId] || 0
+
   return (
     <div className="max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-5 flex gap-2 rounded-lg bg-slate-100 p-1">
@@ -64,9 +71,16 @@ function CustomerStep({ customers, onPick }) {
           <select className="input" value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
             <option value="">Select a customer</option>
             {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name}{c.location ? ' (' + c.location + ')' : ''}</option>
+              <option key={c.id} value={c.id}>
+                {c.name}{c.location ? ' (' + c.location + ')' : ''}{owedBy[c.id] > 0 ? ' · owes ' + money(owedBy[c.id]) : ''}
+              </option>
             ))}
           </select>
+          {selectedOwes > 0 && (
+            <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              This customer owes {money(selectedOwes)} from earlier orders. It will be shown on the new invoice.
+            </div>
+          )}
           <button disabled={!selectedId} className="btn"
             onClick={() => onPick(customers.find((c) => c.id === selectedId))}>
             Continue
@@ -141,7 +155,7 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
     const qty = Number(line.qty)
     const price = Number(line.price)
     const short = qty > line.product.stock_qty
-    if (!(qty > 0) || !(price > 0)) allReady = false
+    if (!validQty(line.qty) || !(price > 0)) allReady = false
     if (short && !line.ok) allReady = false
     total += qty * price
   }
@@ -152,7 +166,8 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
         {lines.map((line) => {
           const qty = Number(line.qty)
           const stock = line.product.stock_qty
-          const short = qty > stock
+          const qtyOk = validQty(line.qty)
+          const short = qtyOk && qty > stock
           return (
             <div key={line.product.id}
               className={'rounded-2xl border bg-white p-4 shadow-sm ' +
@@ -167,20 +182,24 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                 </div>
                 <div className="w-24 sm:w-28">
                   <label className="text-xs text-slate-500">Quantity</label>
-                  <input className="input" type="number" min="1" value={line.qty}
+                  <input className={'input ' + (qtyOk ? '' : '!border-red-400')} type="number" min="1" step="1" value={line.qty}
                     onChange={(e) => onChange(line.product.id, { qty: e.target.value, ok: false })} />
                 </div>
                 <div className="w-32 sm:w-36">
                   <label className="text-xs text-slate-500">Price (GH₵)</label>
-                  <input className="input" type="number" min="0" step="0.01" value={line.price}
+                  <input className="input" type="number" min="0.01" step="0.01" value={line.price}
                     onChange={(e) => onChange(line.product.id, { price: e.target.value })} />
                 </div>
                 <div className="ml-auto text-right sm:w-32">
                   <div className="text-xs text-slate-500">Amount</div>
-                  <div className="font-bold">{money(qty * Number(line.price))}</div>
+                  <div className="font-bold">{money(qtyOk ? qty * Number(line.price) : 0)}</div>
                 </div>
                 <button onClick={() => onRemove(line.product.id)} className="text-slate-300 hover:text-red-500">✕</button>
               </div>
+
+              {!qtyOk && line.qty !== '' && (
+                <div className="mt-2 text-sm text-red-600">Quantity must be a whole number of at least 1.</div>
+              )}
 
               {short && !line.ok && (
                 <div className="mt-3 flex flex-col gap-3 rounded-xl bg-red-50 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -224,10 +243,100 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
   )
 }
 
+function CheckoutModal({ customer, previousBalance, lines, total, saving, error, onClose, onSubmit }) {
+  const [paid, setPaid] = useState('')
+  const [method, setMethod] = useState('cash')
+  const [dueDate, setDueDate] = useState('')
+
+  const paidNum = Math.round(Number(paid || 0) * 100) / 100
+  const paidOk = paidNum >= 0 && paidNum <= total + 0.001
+  const balance = Math.max(0, total - paidNum)
+  const owed = lines.filter((l) => Number(l.qty) > l.product.stock_qty)
+
+  return (
+    <Modal title="Confirm order" onClose={onClose} wide>
+      <div className="text-sm text-slate-500">Customer</div>
+      <div className="font-semibold">{customer.name}</div>
+
+      <div className="overflow-x-auto"><table className="mt-4 w-full text-sm">
+        <thead className="text-left text-xs uppercase text-slate-400">
+          <tr><th className="py-2">Item</th><th className="py-2 text-center">Qty</th><th className="py-2 text-right">Price</th><th className="py-2 text-right">Amount</th></tr>
+        </thead>
+        <tbody>
+          {lines.map((l) => {
+            const short = Number(l.qty) > l.product.stock_qty
+            return (
+              <tr key={l.product.id} className={'border-t border-slate-100 ' + (short ? 'bg-red-50 text-red-700' : '')}>
+                <td className="py-2">{l.product.name}{short && <span className="ml-2 text-xs">({Number(l.qty) - l.product.stock_qty} owed)</span>}</td>
+                <td className="py-2 text-center">{l.qty}</td>
+                <td className="py-2 text-right">{money(l.price)}</td>
+                <td className="py-2 text-right font-semibold">{money(Number(l.qty) * Number(l.price))}</td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table></div>
+
+      <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
+        <span className="text-sm text-slate-500">{owed.length > 0 ? owed.length + ' item(s) will be delivered later' : 'All items in stock'}</span>
+        <span className="text-xl font-bold">{money(total)}</span>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-3">
+        <div>
+          <div className="flex items-center justify-between">
+            <label className="text-xs text-slate-500">Amount paid now (GH₵)</label>
+            <button type="button" onClick={() => setPaid(total.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
+              Full
+            </button>
+          </div>
+          <input className={'input ' + (paidOk ? '' : '!border-red-400')} type="number" min="0" step="0.01" max={total}
+            placeholder="0.00" value={paid} onChange={(e) => setPaid(e.target.value)} />
+        </div>
+        <div>
+          <label className="text-xs text-slate-500">Payment method</label>
+          <select className="input" value={method} onChange={(e) => setMethod(e.target.value)} disabled={paidNum <= 0}>
+            {paymentMethods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="text-xs text-slate-500">Due date for balance</label>
+          <input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+            disabled={balance <= 0.005} />
+        </div>
+      </div>
+
+      <div className="mt-4 space-y-1 text-sm">
+        <div className="flex justify-between"><span className="text-slate-500">Balance on this order</span>
+          <span className={'font-semibold ' + (balance > 0.005 ? 'text-red-600' : 'text-emerald-600')}>{money(balance)}</span></div>
+        {previousBalance > 0 && (
+          <div className="flex justify-between"><span className="text-slate-500">Previous balance</span>
+            <span className="font-semibold text-amber-700">{money(previousBalance)}</span></div>
+        )}
+        <div className="flex justify-between border-t border-slate-200 pt-2"><span className="font-semibold">Total due after this order</span>
+          <span className="font-bold">{money(balance + previousBalance)}</span></div>
+      </div>
+
+      {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid must be between 0 and the order total.</div>}
+      {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+
+      <div className="mt-6 flex justify-end gap-3">
+        <button onClick={onClose} className="btn-ghost">Go back</button>
+        <button disabled={saving || !paidOk}
+          onClick={() => onSubmit({ paid: paidNum, method, dueDate: balance > 0.005 && dueDate ? dueDate : null })}
+          className="btn">
+          {saving ? 'Creating...' : 'Confirm and create invoice'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 export default function NewOrder() {
   const { profile } = useAuth()
   const [step, setStep] = useState(1)
   const [customers, setCustomers] = useState([])
+  const [owedBy, setOwedBy] = useState({})
   const [products, setProducts] = useState([])
   const [customer, setCustomer] = useState(null)
   const [lines, setLines] = useState([])
@@ -237,12 +346,16 @@ export default function NewOrder() {
   const [done, setDone] = useState(null)
 
   async function loadData() {
-    const [c, p] = await Promise.all([
+    const [c, p, b] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
+      supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0),
     ])
     setCustomers(c.data || [])
     setProducts(p.data || [])
+    const owed = {}
+    for (const row of b.data || []) owed[row.customer_id] = Number(row.owed)
+    setOwedBy(owed)
   }
 
   useEffect(() => { loadData() }, [])
@@ -250,7 +363,7 @@ export default function NewOrder() {
   function toggleProduct(product) {
     const exists = lines.find((l) => l.product.id === product.id)
     if (exists) setLines(lines.filter((l) => l.product.id !== product.id))
-    else setLines([...lines, { product, qty: '', price: '', ok: false }])
+    else setLines([...lines, { product, qty: '1', price: '', ok: false }])
   }
 
   function updateLine(id, changes) {
@@ -263,34 +376,40 @@ export default function NewOrder() {
     if (rest.length === 0) setStep(2)
   }
 
-  function invoiceItems() {
-    return lines.map((l) => ({
-      name: l.product.name,
-      qty: Number(l.qty),
-      price: Number(l.price),
-      pending_qty: Math.max(0, Number(l.qty) - l.product.stock_qty),
-    }))
-  }
-
-  async function submit() {
+  async function submit({ paid, method, dueDate }) {
     setSaving(true)
     setError('')
 
     const items = lines.map((l) => ({ product_id: l.product.id, qty: Number(l.qty), price: Number(l.price) }))
-    const { data: orderId, error } = await supabase.rpc('create_order', { p_customer_id: customer.id, p_items: items })
+    const { data: orderId, error } = await supabase.rpc('create_order', {
+      p_customer_id: customer.id,
+      p_items: items,
+      p_amount_paid: paid,
+      p_method: method,
+      p_due_date: dueDate,
+    })
     if (error) {
       setError(error.message)
       setSaving(false)
       return
     }
 
-    const { data: order } = await supabase.from('orders').select('order_number, created_at').eq('id', orderId).single()
+    const { data: order } = await supabase.from('orders')
+      .select('order_number, created_at, previous_balance, due_date').eq('id', orderId).single()
     const invoice = {
-      orderNumber: order.order_number,
+      invoiceNumber: invoiceNumber(order.order_number),
       date: order.created_at,
+      dueDate: order.due_date,
       customer,
       salesperson: profile.full_name,
-      items: invoiceItems(),
+      paid,
+      previousBalance: Number(order.previous_balance),
+      items: lines.map((l) => ({
+        name: l.product.name,
+        qty: Number(l.qty),
+        price: Number(l.price),
+        pending_qty: Math.max(0, Number(l.qty) - l.product.stock_qty),
+      })),
     }
     downloadInvoice(invoice)
     setDone(invoice)
@@ -307,16 +426,19 @@ export default function NewOrder() {
   }
 
   if (done) {
-    let total = 0
-    for (const item of done.items) total += item.qty * item.price
+    const t = invoiceTotals(done)
     return (
       <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-2xl text-emerald-600">✓</div>
-        <h1 className="mt-5 text-xl font-bold">Order #{done.orderNumber} created</h1>
-        <p className="mt-1 text-sm text-slate-500">{done.customer.name} · {money(total)}</p>
+        <h1 className="mt-5 text-xl font-bold">Invoice {done.invoiceNumber} created</h1>
+        <p className="mt-1 text-sm text-slate-500">{done.customer.name} · {money(t.subtotal)} · paid {money(t.paid)}</p>
+        {t.totalDue > 0.005 && (
+          <p className="mt-1 text-sm font-medium text-red-600">Customer now owes {money(t.totalDue)}</p>
+        )}
         <p className="mt-1 text-sm text-slate-400">The invoice was downloaded and the admin has been notified.</p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
-          <button onClick={() => downloadInvoice(done)} className="btn">Download invoice again</button>
+          <button onClick={() => downloadInvoice(done)} className="btn">Download again</button>
+          <button onClick={() => shareInvoice(done)} className="btn-ghost">Share</button>
           <button onClick={reset} className="btn-ghost">New order</button>
           <Link to="/orders" className="btn-ghost">View orders</Link>
         </div>
@@ -326,19 +448,23 @@ export default function NewOrder() {
 
   let total = 0
   for (const l of lines) total += Number(l.qty) * Number(l.price)
-  const owed = lines.filter((l) => Number(l.qty) > l.product.stock_qty)
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">New order</h1>
-          {customer && <p className="text-sm text-slate-500">For {customer.name}</p>}
+          {customer && (
+            <p className="text-sm text-slate-500">
+              For {customer.name}
+              {owedBy[customer.id] > 0 && <span className="text-amber-700"> · owes {money(owedBy[customer.id])}</span>}
+            </p>
+          )}
         </div>
         <StepBar step={step} />
       </div>
 
-      {step === 1 && <CustomerStep customers={customers} onPick={(c) => { setCustomer(c); setStep(2) }} />}
+      {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
 
       {step === 2 && (
         <ItemsStep products={products} selectedIds={lines.map((l) => l.product.id)}
@@ -347,47 +473,12 @@ export default function NewOrder() {
 
       {step === 3 && (
         <ReviewStep lines={lines} onChange={updateLine} onRemove={removeLine}
-          onBack={() => setStep(2)} onCheckout={() => setConfirmOpen(true)} />
+          onBack={() => setStep(2)} onCheckout={() => { setError(''); setConfirmOpen(true) }} />
       )}
 
       {confirmOpen && (
-        <Modal title="Confirm order" onClose={() => setConfirmOpen(false)} wide>
-          <div className="text-sm text-slate-500">Customer</div>
-          <div className="font-semibold">{customer.name}</div>
-
-          <div className="overflow-x-auto"><table className="mt-4 w-full text-sm">
-            <thead className="text-left text-xs uppercase text-slate-400">
-              <tr><th className="py-2">Item</th><th className="py-2 text-center">Qty</th><th className="py-2 text-right">Price</th><th className="py-2 text-right">Amount</th></tr>
-            </thead>
-            <tbody>
-              {lines.map((l) => {
-                const short = Number(l.qty) > l.product.stock_qty
-                return (
-                  <tr key={l.product.id} className={'border-t border-slate-100 ' + (short ? 'bg-red-50 text-red-700' : '')}>
-                    <td className="py-2">{l.product.name}{short && <span className="ml-2 text-xs">({Number(l.qty) - l.product.stock_qty} owed)</span>}</td>
-                    <td className="py-2 text-center">{l.qty}</td>
-                    <td className="py-2 text-right">{money(l.price)}</td>
-                    <td className="py-2 text-right font-semibold">{money(Number(l.qty) * Number(l.price))}</td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table></div>
-
-          <div className="mt-4 flex items-center justify-between border-t border-slate-200 pt-4">
-            <span className="text-sm text-slate-500">{owed.length > 0 ? owed.length + ' item(s) will be delivered later' : 'All items in stock'}</span>
-            <span className="text-xl font-bold">{money(total)}</span>
-          </div>
-
-          {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-
-          <div className="mt-6 flex justify-end gap-3">
-            <button onClick={() => setConfirmOpen(false)} className="btn-ghost">Go back</button>
-            <button disabled={saving} onClick={submit} className="btn">
-              {saving ? 'Creating...' : 'Confirm and create invoice'}
-            </button>
-          </div>
-        </Modal>
+        <CheckoutModal customer={customer} previousBalance={owedBy[customer.id] || 0} lines={lines} total={total}
+          saving={saving} error={error} onClose={() => setConfirmOpen(false)} onSubmit={submit} />
       )}
     </div>
   )

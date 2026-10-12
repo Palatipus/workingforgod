@@ -8,6 +8,7 @@ const links = [
   { to: '/orders', label: 'Orders', icon: 'receipt' },
   { to: '/orders/new', label: 'New order', icon: 'plus' },
   { to: '/inventory', label: 'Inventory', icon: 'box' },
+  { to: '/customers', label: 'Customers', icon: 'users' },
 ]
 
 export default function Layout() {
@@ -71,7 +72,7 @@ export default function Layout() {
         {links.map((link) => (
           <NavLink key={link.to} to={link.to} end={link.to === '/'}
             className={({ isActive }) =>
-              'flex flex-1 flex-col items-center gap-1 py-2.5 text-xs font-semibold ' + (isActive ? 'text-indigo-600' : 'text-slate-500')}>
+              'flex flex-1 flex-col items-center gap-1 py-2.5 text-[11px] font-semibold ' + (isActive ? 'text-indigo-600' : 'text-slate-500')}>
             <Icon name={link.icon} size={20} />
             {link.label}
           </NavLink>

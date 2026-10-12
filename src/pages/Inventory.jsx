@@ -25,6 +25,7 @@ function ProductForm({ product, onClose, onSaved }) {
   const [file, setFile] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [confirmRemove, setConfirmRemove] = useState(false)
 
   const preview = file ? URL.createObjectURL(file) : product?.image_url
 
@@ -80,6 +81,36 @@ function ProductForm({ product, onClose, onSaved }) {
     }
   }
 
+  // Products are hidden rather than deleted so past orders and invoices keep their item names.
+  async function remove() {
+    setSaving(true)
+    const { error } = await supabase.from('products').update({ is_active: false }).eq('id', product.id)
+    if (error) {
+      setError(error.message)
+      setSaving(false)
+      setConfirmRemove(false)
+      return
+    }
+    onSaved()
+  }
+
+  if (confirmRemove) {
+    return (
+      <Modal title="Remove product?" onClose={() => setConfirmRemove(false)}>
+        <p className="text-sm text-slate-600">
+          {product.name} will be removed from inventory and new orders. Past orders and invoices are not affected.
+        </p>
+        <div className="mt-6 flex justify-end gap-3">
+          <button onClick={() => setConfirmRemove(false)} className="btn-ghost">Cancel</button>
+          <button disabled={saving} onClick={remove}
+            className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-50">
+            {saving ? 'Removing...' : 'Yes, remove'}
+          </button>
+        </div>
+      </Modal>
+    )
+  }
+
   return (
     <Modal title={product ? 'Edit product' : 'Add product'} onClose={onClose}>
       <form onSubmit={save} className="space-y-4">
@@ -124,6 +155,12 @@ function ProductForm({ product, onClose, onSaved }) {
         {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
 
         <div className="flex justify-end gap-3">
+          {product && profile.role === 'admin' && (
+            <button type="button" onClick={() => setConfirmRemove(true)}
+              className="mr-auto text-sm font-medium text-red-600 hover:underline">
+              Remove product
+            </button>
+          )}
           <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
           <button disabled={saving} className="btn">{saving ? 'Saving...' : 'Save product'}</button>
         </div>

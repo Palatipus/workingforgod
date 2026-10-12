@@ -4,10 +4,10 @@ import Icon from '../components/Icon'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
+import { money as formatMoney } from '../format'
+import { invoiceNumber } from '../invoice'
 
-function money(n) {
-  return new Intl.NumberFormat('en-GH', { style: 'currency', currency: 'GHS', maximumFractionDigits: 0 }).format(n || 0)
-}
+const money = (n) => formatMoney(n, 0)
 
 function percentChange(now, before) {
   if (!before) return null
@@ -79,7 +79,7 @@ function RecentOrders() {
       <div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-sm">
         <thead className="text-left text-xs uppercase text-slate-400">
           <tr>
-            <th className="px-5 py-3">Order</th>
+            <th className="px-5 py-3">Invoice</th>
             <th className="px-5 py-3">Customer</th>
             <th className="px-5 py-3">Salesperson</th>
             <th className="px-5 py-3">Date</th>
@@ -97,7 +97,7 @@ function RecentOrders() {
             return (
               <tr key={order.id} className="border-t border-slate-100">
                 <td className="px-5 py-3 font-medium">
-                  #{order.order_number}
+                  {invoiceNumber(order.order_number)}
                   {hasPending && (
                     <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
                       pending
@@ -246,7 +246,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that all four SQL files ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_5.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -262,7 +262,7 @@ function AdminDashboard() {
         <p className="text-sm text-slate-500">Stock, orders and sales at a glance.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5 lg:gap-4">
         <StatCard label="Revenue this month" icon="revenue" tone="blue" note="No sales last month"
           value={money(stats.revenue_this_month)}
           change={percentChange(stats.revenue_this_month, stats.revenue_last_month)} />
@@ -272,6 +272,9 @@ function AdminDashboard() {
           value={stats.pending_deliveries} alert={stats.pending_deliveries > 0} />
         <StatCard label="Low / out of stock" icon="box" tone="amber" note="Products to restock"
           value={stats.low_stock_count + stats.out_of_stock_count} alert={stats.out_of_stock_count > 0} />
+        <StatCard label="Owed by customers" icon="users" tone="red"
+          note={(stats.customers_owing || 0) + ' customer' + (stats.customers_owing === 1 ? '' : 's') + ' owing'}
+          value={money(stats.outstanding_debt)} alert={stats.outstanding_debt > 0} />
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">

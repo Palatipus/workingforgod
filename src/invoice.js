@@ -310,3 +310,24 @@ export function invoiceFile(data) {
   const blob = buildInvoice(data).output('blob')
   return new File([blob], data.invoiceNumber + '.pdf', { type: 'application/pdf' })
 }
+
+function whatsappNumber(phone) {
+  const digits = String(phone || '').replace(/\D/g, '')
+  if (digits.startsWith('0')) return '233' + digits.slice(1)
+  return digits
+}
+
+// Shares the PDF through the phone's share sheet when possible, otherwise opens WhatsApp with a text summary.
+export async function shareInvoice(data) {
+  const file = invoiceFile(data)
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try {
+      await navigator.share({ files: [file], title: data.invoiceNumber, text: invoiceMessage(data) })
+      return
+    } catch (err) {
+      if (err.name === 'AbortError') return
+    }
+  }
+  const to = whatsappNumber(data.customer.phone)
+  window.open('https://wa.me/' + to + '?text=' + encodeURIComponent(invoiceMessage(data)), '_blank')
+}
