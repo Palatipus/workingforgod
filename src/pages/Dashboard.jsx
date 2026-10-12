@@ -268,7 +268,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_8.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_9.sql) ran and that this account is an admin.</p>
       </div>
     )
   }

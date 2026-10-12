@@ -183,6 +183,11 @@ function ItemsStep({ products, selectedIds, onToggle, onBack, onNext }) {
                 <span className={'mt-1 inline-block rounded-full px-2 py-0.5 text-xs font-medium ' + status.cls}>
                   {p.stock_qty === 0 ? 'Out of stock' : p.stock_qty + ' left'}
                 </span>
+                {p.owed_qty > 0 && (
+                  <span className="ml-1 mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                    {p.owed_qty} owed
+                  </span>
+                )}
               </div>
             </button>
           )
@@ -244,6 +249,13 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                 </div>
                 <button onClick={() => onRemove(line.product.id)} className="text-slate-300 hover:text-red-500">✕</button>
               </div>
+
+              {line.product.owed_qty > 0 && stock > 0 && (
+                <div className="mt-3 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-900">
+                  {line.product.owed_qty} of this product {line.product.owed_qty === 1 ? 'is' : 'are'} owed to earlier customers.
+                  Selling now uses stock they are waiting for.
+                </div>
+              )}
 
               {!qtyOk && line.qty !== '' && (
                 <div className="mt-2 text-sm text-red-600">Quantity must be a whole number of at least 1.</div>
@@ -418,17 +430,20 @@ export default function NewOrder() {
 
   async function loadData() {
     setLoadFailed(false)
-    const [c, p, b] = await Promise.all([
+    const [c, p, b, o] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
       supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0),
+      supabase.from('product_owed').select('product_id, owed_qty'),
     ])
     if (c.error || p.error || b.error) {
       setLoadFailed(true)
       return
     }
     setCustomers(c.data || [])
-    setProducts(p.data || [])
+    const owedQty = {}
+    for (const row of o.data || []) owedQty[row.product_id] = row.owed_qty
+    setProducts((p.data || []).map((prod) => ({ ...prod, owed_qty: owedQty[prod.id] || 0 })))
     const owed = {}
     for (const row of b.data || []) owed[row.customer_id] = Number(row.owed)
     setOwedBy(owed)

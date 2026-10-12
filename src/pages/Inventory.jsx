@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
+import DeliverDialog from '../components/DeliverDialog'
 import { stockStatus, adjustReasons, movementLabels } from '../format'
 import { invoiceNumber } from '../invoice'
 import { shrinkImage } from '../image'
@@ -81,7 +82,6 @@ function ProductForm({ product, onClose, onSaved }) {
             product_id: data.id,
             qty: Number(form.initial_stock),
             supplier: 'Opening stock',
-            created_by: profile.id,
           })
           if (stockError) throw stockError
         }
@@ -195,7 +195,6 @@ function StockForm({ product, onClose, onSaved }) {
       product_id: product.id,
       qty: Number(qty),
       supplier: supplier || null,
-      created_by: profile.id,
     })
     if (error) {
       setError(error.message)
@@ -294,7 +293,60 @@ function AdjustForm({ product, onClose, onSaved }) {
   )
 }
 
-function History({ product, isAdmin, onAdjust, onClose }) {
+function Waiting({ product, onDelivered }) {
+  const navigate = useNavigate()
+  const [items, setItems] = useState([])
+  const [delivering, setDelivering] = useState(null)
+
+  async function load() {
+    const { data } = await supabase.from('order_items')
+      .select('id, pending_qty, orders!inner(id, order_number, created_at, cancelled_at, customers(name))')
+      .eq('product_id', product.id).gt('pending_qty', 0).is('orders.cancelled_at', null)
+    setItems((data || []).sort((a, b) => a.orders.created_at.localeCompare(b.orders.created_at)))
+  }
+
+  useEffect(() => { load() }, [product.id, product.stock_qty])
+
+  if (items.length === 0) return null
+  let owed = 0
+  for (const i of items) owed += i.pending_qty
+
+  return (
+    <div className="mt-4 rounded-xl border border-red-200 bg-red-50 p-4">
+      <div className="text-sm font-semibold text-red-700">
+        {owed} owed to customers{product.stock_qty > 0 ? ', deliver these before selling to anyone else' : ''}
+      </div>
+      <div className="mt-2 divide-y divide-red-100 text-sm">
+        {items.map((i) => (
+          <div key={i.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+            <span>
+              <span className="font-medium">{i.orders.customers?.name}</span>
+              <button onClick={() => navigate('/orders?order=' + i.orders.id)} className="ml-2 text-xs text-indigo-600 hover:underline">
+                {invoiceNumber(i.orders.order_number)}
+              </button>
+              <span className="ml-2 text-xs text-slate-500">since {new Date(i.orders.created_at).toLocaleDateString()}</span>
+            </span>
+            <span className="flex items-center gap-3">
+              <span className="font-semibold text-red-700">{i.pending_qty} owed</span>
+              <button disabled={product.stock_qty === 0} onClick={() => setDelivering(i)}
+                className="rounded-md bg-red-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-red-700 disabled:opacity-40">
+                Deliver
+              </button>
+            </span>
+          </div>
+        ))}
+      </div>
+      {product.stock_qty === 0 && <div className="mt-1 text-xs text-red-600">No stock yet. Add stock first, then deliver.</div>}
+
+      {delivering && (
+        <DeliverDialog item={delivering} productName={product.name} customerName={delivering.orders.customers?.name}
+          onClose={() => setDelivering(null)} onDone={() => { setDelivering(null); load(); onDelivered() }} />
+      )}
+    </div>
+  )
+}
+
+function History({ product, isAdmin, onAdjust, onClose, onChanged }) {
   const navigate = useNavigate()
   const [rows, setRows] = useState(null)
   const [failed, setFailed] = useState(false)
@@ -318,6 +370,8 @@ function History({ product, isAdmin, onAdjust, onClose }) {
         <div className="text-sm text-slate-500">Now <b className="text-slate-900">{product.stock_qty}</b> in stock</div>
         {isAdmin && <button onClick={onAdjust} className="btn-ghost !py-1.5">Adjust stock</button>}
       </div>
+
+      <Waiting product={product} onDelivered={onChanged} />
 
       {failed && <div className="mt-4"><LoadError compact onRetry={load} /></div>}
       {!rows && !failed && <div className="py-10 text-center text-sm text-slate-400">Loading...</div>}
@@ -358,7 +412,7 @@ function History({ product, isAdmin, onAdjust, onClose }) {
 }
 
 export default function Inventory() {
-  const [products, setProducts] = useState([])
+  const [all, setAll] = useState([])
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState('all')
   const [editing, setEditing] = useState(null)
@@ -369,14 +423,27 @@ export default function Inventory() {
   const { profile } = useAuth()
   const isAdmin = profile.role === 'admin'
 
+  const [owed, setOwed] = useState({})
+
   async function load() {
-    const { data, error } = await supabase.from('products').select('*').eq('is_active', true).order('name')
-    if (error) {
+    const [p, o] = await Promise.all([
+      supabase.from('products').select('*').order('name'),
+      supabase.from('product_owed').select('*'),
+    ])
+    if (p.error) {
       setLoadFailed(true)
       return
     }
     setLoadFailed(false)
-    setProducts(data || [])
+    setAll(p.data || [])
+    const map = {}
+    for (const row of o.data || []) map[row.product_id] = row
+    setOwed(map)
+  }
+
+  async function restore(product) {
+    const { error } = await supabase.from('products').update({ is_active: true }).eq('id', product.id)
+    if (!error) load()
   }
 
   useEffect(() => {
@@ -384,9 +451,13 @@ export default function Inventory() {
     const channel = supabase
       .channel('products-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, load)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
+
+  const products = all.filter((p) => p.is_active)
+  const removed = all.filter((p) => !p.is_active)
 
   // ?product=<id> opens that product's history (used by low-stock alerts)
   const historyId = params.get('product')
@@ -395,9 +466,11 @@ export default function Inventory() {
     setParams(id ? { product: id } : {})
   }
 
-  const shown = products.filter((p) => {
+  const shown = (filter === 'removed' ? removed : products).filter((p) => {
     const text = (p.name + ' ' + (p.brand || '')).toLowerCase()
     if (!text.includes(search.toLowerCase())) return false
+    if (filter === 'removed') return true
+    if (filter === 'owed') return !!owed[p.id]
     if (filter === 'low') return p.stock_qty <= p.reorder_level
     if (filter !== 'all') return p.category === filter
     return true
@@ -422,7 +495,7 @@ export default function Inventory() {
 
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
         <div className="flex gap-2 overflow-x-auto pb-1">
-          {filters.map(([key, label]) => (
+          {[...filters, ['owed', 'Owed to customers'], ...(isAdmin && removed.length > 0 ? [['removed', 'Removed']] : [])].map(([key, label]) => (
             <button key={key} onClick={() => setFilter(key)}
               className={'shrink-0 whitespace-nowrap rounded-full px-4 py-1.5 text-sm font-medium ' +
                 (filter === key ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50')}>
@@ -457,10 +530,20 @@ export default function Inventory() {
                   <span className="ml-1 text-xs font-normal text-slate-400">in stock</span>
                   <span className="block text-xs font-medium text-indigo-600 hover:underline">Stock history</span>
                 </button>
-                <div className="mt-3 flex gap-2">
-                  <button onClick={() => setStocking(p)} className="btn flex-1 !py-1.5">+ Stock</button>
-                  <button onClick={() => setEditing(p)} className="btn-ghost !py-1.5">Edit</button>
-                </div>
+                {owed[p.id] && (
+                  <button onClick={() => showHistory(p.id)}
+                    className="mt-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700 hover:bg-red-200">
+                    {owed[p.id].owed_qty} owed to {owed[p.id].customers_waiting === 1 ? '1 customer' : owed[p.id].customers_waiting + ' customers'}
+                  </button>
+                )}
+                {p.is_active ? (
+                  <div className="mt-3 flex gap-2">
+                    <button onClick={() => setStocking(p)} className="btn flex-1 !py-1.5">+ Stock</button>
+                    <button onClick={() => setEditing(p)} className="btn-ghost !py-1.5">Edit</button>
+                  </div>
+                ) : (
+                  <button onClick={() => restore(p)} className="btn mt-3 w-full !py-1.5">Restore product</button>
+                )}
               </div>
             </div>
           )
@@ -480,7 +563,7 @@ export default function Inventory() {
       )}
       {stocking && <StockForm product={stocking} onClose={() => setStocking(null)} onSaved={saved} />}
       {historyProduct && (
-        <History product={historyProduct} isAdmin={isAdmin} onClose={() => showHistory(null)}
+        <History product={historyProduct} isAdmin={isAdmin} onClose={() => showHistory(null)} onChanged={load}
           onAdjust={() => setAdjusting(historyProduct)} />
       )}
       {adjusting && <AdjustForm product={adjusting} onClose={() => setAdjusting(null)} onSaved={saved} />}

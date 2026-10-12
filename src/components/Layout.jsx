@@ -4,7 +4,9 @@ import { useAuth } from '../AuthContext'
 import NotificationBell from './NotificationBell'
 import Icon from './Icon'
 import UsernameDialog from './UsernameDialog'
-import { useInstallPrompt } from '../install'
+import PasswordDialog from './PasswordDialog'
+import Modal from './Modal'
+import { useInstallPrompt, useOnline } from '../install'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: 'home' },
@@ -18,7 +20,10 @@ export default function Layout() {
   const { profile, signOut, refreshProfile } = useAuth()
   // Ask people without a username to pick one (accounts made before usernames existed)
   const [usernameOpen, setUsernameOpen] = useState(!profile.username)
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [accountOpen, setAccountOpen] = useState(false)
   const { available: canInstall, install } = useInstallPrompt()
+  const online = useOnline()
   const isAdmin = profile.role === 'admin'
   const sideLinks = isAdmin ? [...links, { to: '/team', label: 'Team', icon: 'team' }] : links
 
@@ -55,15 +60,20 @@ export default function Layout() {
           <button onClick={() => setUsernameOpen(true)} className="block text-xs text-slate-400 hover:text-indigo-600">
             {profile.username ? '@' + profile.username : 'Set a username'} · <span className="capitalize">{profile.role}</span>
           </button>
-          <button onClick={signOut} className="mt-2 text-xs font-medium text-red-500 hover:underline">
-            Sign out
-          </button>
+          <div className="mt-2 flex gap-3">
+            <button onClick={() => setPasswordOpen(true)} className="text-xs font-medium text-slate-500 hover:text-indigo-600 hover:underline">
+              Change password
+            </button>
+            <button onClick={signOut} className="text-xs font-medium text-red-500 hover:underline">
+              Sign out
+            </button>
+          </div>
         </div>
       </aside>
 
       <main className="min-w-0 flex-1 p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-8 md:pb-8">
         <div className="mb-4 flex items-center justify-between md:mb-6 md:justify-end">
-          <button onClick={() => setUsernameOpen(true)} className="flex items-center gap-2 text-left md:hidden">
+          <button onClick={() => setAccountOpen(true)} className="flex items-center gap-2 text-left md:hidden">
             <img src="/logo.png" alt="" className="h-9 w-9" />
             <span>
               <span className="block text-sm font-bold leading-tight text-indigo-800">Working For God</span>
@@ -89,8 +99,30 @@ export default function Layout() {
             </button>
           </div>
         </div>
+        {!online && (
+          <div className="mb-4 rounded-xl bg-amber-100 px-4 py-2.5 text-sm font-medium text-amber-900">
+            You're offline. Changes can't be saved until your connection is back.
+          </div>
+        )}
         <Outlet />
       </main>
+
+      {accountOpen && (
+        <Modal title={profile.full_name} onClose={() => setAccountOpen(false)}>
+          <div className="text-sm text-slate-500">
+            {profile.username ? '@' + profile.username : 'No username yet'} · <span className="capitalize">{profile.role}</span>
+          </div>
+          <div className="mt-5 grid gap-2">
+            <button onClick={() => { setAccountOpen(false); setUsernameOpen(true) }} className="btn-ghost w-full !py-2.5">
+              {profile.username ? 'Change username' : 'Set a username'}
+            </button>
+            <button onClick={() => { setAccountOpen(false); setPasswordOpen(true) }} className="btn-ghost w-full !py-2.5">Change password</button>
+            <button onClick={signOut} className="w-full rounded-lg py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">Sign out</button>
+          </div>
+        </Modal>
+      )}
+
+      {passwordOpen && <PasswordDialog onClose={() => setPasswordOpen(false)} />}
 
       {usernameOpen && (
         <UsernameDialog current={profile.username}

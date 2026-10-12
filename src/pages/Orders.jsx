@@ -5,6 +5,7 @@ import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
 import ReceiptActions from '../components/ReceiptActions'
+import DeliverDialog from '../components/DeliverDialog'
 import { money, paymentMethods, methodLabel, searchTerm, today, receiptNumber } from '../format'
 import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, loadPdf } from '../invoice'
 
@@ -78,43 +79,6 @@ function PaymentForm({ order, balance, onSaved }) {
   )
 }
 
-function DeliverDialog({ item, customerName, onClose, onDone }) {
-  const [qty, setQty] = useState(String(item.pending_qty))
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const n = Number(qty)
-  const valid = Number.isInteger(n) && n >= 1 && n <= item.pending_qty
-
-  async function deliver() {
-    setSaving(true)
-    setError('')
-    const { error } = await supabase.rpc('mark_delivered', { p_item_id: item.id, p_qty: n })
-    setSaving(false)
-    if (error) {
-      setError(error.message)
-      return
-    }
-    onDone()
-  }
-
-  return (
-    <Modal title={'Deliver ' + item.products.name} onClose={onClose}>
-      <p className="text-sm text-slate-600">
-        {item.pending_qty} still owed to {customerName}. The quantity you deliver is taken out of stock.
-      </p>
-      <label className="mt-4 block text-xs text-slate-500">Quantity delivered now</label>
-      <input className={'input ' + (valid ? '' : '!border-red-400')} type="number" min="1" max={item.pending_qty} step="1"
-        value={qty} onChange={(e) => setQty(e.target.value)} />
-      {!valid && <div className="mt-1 text-xs text-red-600">Enter a whole number from 1 to {item.pending_qty}.</div>}
-      {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-      <div className="mt-6 flex justify-end gap-3">
-        <button onClick={onClose} className="btn-ghost">Cancel</button>
-        <button disabled={saving || !valid} onClick={deliver} className="btn">{saving ? 'Saving...' : 'Mark delivered'}</button>
-      </div>
-    </Modal>
-  )
-}
-
 function ConfirmDialog({ title, text, confirmLabel, children, onClose, onConfirm }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -143,6 +107,121 @@ function ConfirmDialog({ title, text, confirmLabel, children, onClose, onConfirm
   )
 }
 
+function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
+  const lines = order.order_items.filter((i) => i.qty > 0)
+  const [qtys, setQtys] = useState({})
+  const [restock, setRestock] = useState(true)
+  const [reason, setReason] = useState('')
+  const [method, setMethod] = useState('cash')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  let newTotal = 0
+  let anyReturn = false
+  let valid = true
+  let delivered = 0
+  for (const i of lines) {
+    const raw = qtys[i.id] ?? ''
+    const n = raw === '' ? 0 : Number(raw)
+    if (!Number.isInteger(n) || n < 0 || n > i.qty) valid = false
+    if (n > 0) anyReturn = true
+    delivered += Math.max(0, n - i.pending_qty)
+    newTotal += (i.qty - (Number.isInteger(n) ? n : 0)) * i.price
+  }
+  const refund = Math.max(0, paid - newTotal)
+  const needsAdmin = refund > 0.005 && !isAdmin
+
+  async function save() {
+    setSaving(true)
+    setError('')
+    const items = lines.filter((i) => Number(qtys[i.id] || 0) > 0).map((i) => ({ item_id: i.id, qty: Number(qtys[i.id]) }))
+    const { error } = await supabase.rpc('return_items', {
+      p_order_id: order.id, p_items: items, p_reason: reason || null, p_restock: restock, p_refund_method: method,
+    })
+    setSaving(false)
+    if (error) {
+      setError(error.message)
+      return
+    }
+    onDone()
+  }
+
+  return (
+    <Modal title={'Return items: ' + invoiceNumber(order.order_number)} onClose={onClose} wide>
+      <p className="text-sm text-slate-500">
+        Enter how many of each item come off the order. Items still owed (not yet delivered) are taken off first;
+        anything beyond that is goods the customer is handing back.
+      </p>
+
+      <div className="mt-4 divide-y divide-slate-100 text-sm">
+        {lines.map((i) => (
+          <div key={i.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
+            <div>
+              <div className="font-medium">{i.products.name}</div>
+              <div className="text-xs text-slate-400">
+                {i.qty} on order{i.pending_qty > 0 ? ' · ' + i.pending_qty + ' not delivered yet' : ''} · {money(i.price)} each
+              </div>
+            </div>
+            <input className="input !w-24" type="number" min="0" max={i.qty} step="1" placeholder="0"
+              value={qtys[i.id] ?? ''} onChange={(e) => setQtys({ ...qtys, [i.id]: e.target.value })} />
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 space-y-3">
+        {delivered > 0 && (
+          <label className="flex items-start gap-2 text-sm">
+            <input type="checkbox" className="mt-1" checked={restock} onChange={(e) => setRestock(e.target.checked)} />
+            <span>Put the {delivered} returned item{delivered === 1 ? '' : 's'} back into stock
+              <span className="block text-xs text-slate-400">Untick if they are damaged or expired and can't be sold again.</span></span>
+          </label>
+        )}
+        <input className="input" placeholder="Reason (optional), e.g. faulty, wrong item" value={reason}
+          onChange={(e) => setReason(e.target.value)} />
+      </div>
+
+      {anyReturn && valid && (
+        <div className="mt-4 space-y-1 rounded-xl bg-slate-50 p-4 text-sm">
+          <div className="flex justify-between"><span className="text-slate-500">New order total</span><span className="font-semibold">{money(newTotal)}</span></div>
+          <div className="flex justify-between"><span className="text-slate-500">Already paid</span><span className="font-semibold">{money(paid)}</span></div>
+          {refund > 0.005 ? (
+            <>
+              <div className="flex justify-between text-base"><span className="font-semibold">Refund to customer</span>
+                <span className="font-bold text-red-600">{money(refund)}</span></div>
+              {isAdmin && (
+                <div className="pt-2">
+                  <label className="text-xs text-slate-500">Refund paid by</label>
+                  <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
+                    {paymentMethods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                  </select>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="flex justify-between"><span className="text-slate-500">Balance after return</span>
+              <span className="font-semibold">{money(newTotal - paid)}</span></div>
+          )}
+        </div>
+      )}
+
+      {needsAdmin && (
+        <div className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          This return means giving money back, so an admin has to do it.
+        </div>
+      )}
+      {!valid && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Each quantity must be a whole number, no more than what is on the order.</div>}
+      {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+
+      <div className="mt-6 flex justify-end gap-3">
+        <button onClick={onClose} className="btn-ghost">Go back</button>
+        <button disabled={saving || !anyReturn || !valid || needsAdmin} onClick={save} className="btn">
+          {saving ? 'Saving...' : refund > 0.005 ? 'Return and refund ' + money(refund) : 'Save return'}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 function OrderDetail({ orderId, version, onClose, onChanged }) {
   const { profile } = useAuth()
   const isAdmin = profile.role === 'admin'
@@ -153,6 +232,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
   const [delivering, setDelivering] = useState(null)
   const [reversing, setReversing] = useState(null)
   const [cancelling, setCancelling] = useState(false)
+  const [returning, setReturning] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [shareNote, setShareNote] = useState('')
   const [newReceipt, setNewReceipt] = useState(null)
@@ -161,7 +241,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
     setFailed(false)
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount))')
+      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), canceller:profiles!orders_cancelled_by_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount)), refunds(id, amount, method, note, created_at), order_returns(id, item_id, owed_removed, returned, restocked, reason, created_at, profiles(full_name))')
       .eq('id', orderId)
       .maybeSingle()
     if (error) {
@@ -202,8 +282,20 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
   for (const item of order.order_items) total += item.qty * item.price
   let paid = 0
   for (const p of order.payments) paid += Number(p.amount)
+  let refunded = 0
+  for (const r of order.refunds) refunded += Number(r.amount)
+  paid -= refunded
+  const itemName = {}
+  for (const item of order.order_items) itemName[item.id] = item.products.name
   const balance = cancelled ? 0 : Math.max(0, total - paid)
   const overdue = !cancelled && balance > 0.005 && order.due_date && order.due_date < today()
+
+  function returnsSummary() {
+    if (order.order_returns.length === 0) return ''
+    return 'Returned: ' + order.order_returns
+      .map((r) => (r.owed_removed + r.returned) + ' x ' + itemName[r.item_id] + ' (' + new Date(r.created_at).toLocaleDateString('en-GB') + ')')
+      .join(', ') + '.' + (refunded > 0 ? ' Refunded ' + money(refunded) + '.' : '')
+  }
 
   function invoiceData() {
     return {
@@ -214,8 +306,8 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
       salesperson: order.salesperson?.full_name || '',
       paid,
       previousBalance: earlierOwed,
-      notes: order.notes,
-      items: order.order_items.map((item) => ({
+      notes: [order.notes, returnsSummary()].filter(Boolean).join('  '),
+      items: order.order_items.filter((item) => item.qty > 0).map((item) => ({
         name: item.products.name,
         qty: item.qty,
         price: item.price,
@@ -242,7 +334,8 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
     <Modal title={invoiceNumber(order.order_number) + (cancelled ? ' (cancelled)' : '')} onClose={onClose} wide>
       {cancelled && (
         <div className="mb-4 rounded-lg bg-slate-100 px-3 py-2 text-sm text-slate-600">
-          Cancelled on {new Date(order.cancelled_at).toLocaleDateString()}{order.cancel_reason ? ': ' + order.cancel_reason : ''}.
+          Cancelled on {new Date(order.cancelled_at).toLocaleDateString()}
+          {order.canceller?.full_name ? ' by ' + order.canceller.full_name : ''}{order.cancel_reason ? ': ' + order.cancel_reason : ''}.
           Stock was put back and this order no longer counts in sales or debts.
         </div>
       )}
@@ -280,8 +373,11 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
           {order.order_items.map((item) => {
             const pending = item.pending_qty > 0
             return (
-              <tr key={item.id} className={'border-t border-slate-100 ' + (pending ? 'bg-red-50 text-red-700' : '')}>
-                <td className="py-3 font-medium">{item.products.name}</td>
+              <tr key={item.id} className={'border-t border-slate-100 ' + (pending ? 'bg-red-50 text-red-700' : item.qty === 0 ? 'text-slate-400' : '')}>
+                <td className="py-3 font-medium">
+                  {item.products.name}
+                  {item.qty === 0 && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs">all returned</span>}
+                </td>
                 <td className="py-3 text-center">{item.qty}</td>
                 <td className="py-3 text-right">{money(item.price)}</td>
                 <td className="py-3 text-right font-semibold">{money(item.qty * item.price)}</td>
@@ -321,6 +417,27 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
             <span className="font-semibold text-amber-700">{money(earlierOwed)}</span></div>
         )}
       </div>
+
+      {(order.order_returns.length > 0 || order.refunds.length > 0) && (
+        <div className="mt-4">
+          <div className="text-xs uppercase text-slate-400">Returns and refunds</div>
+          <div className="mt-1 divide-y divide-slate-100 text-sm">
+            {order.order_returns.map((r) => (
+              <div key={r.id} className="py-2 text-slate-600">
+                {new Date(r.created_at).toLocaleDateString()} · {r.owed_removed + r.returned} x {itemName[r.item_id]}
+                {r.returned > 0 ? (r.restocked ? ' · back in stock' : ' · not put back in stock') : ' · not yet delivered, removed'}
+                {r.reason ? ' · ' + r.reason : ''}{r.profiles?.full_name ? ' · by ' + r.profiles.full_name : ''}
+              </div>
+            ))}
+            {order.refunds.map((r) => (
+              <div key={r.id} className="flex justify-between py-2">
+                <span className="text-slate-600">{new Date(r.created_at).toLocaleDateString()} · Refund · {methodLabel(r.method)}</span>
+                <span className="font-semibold text-red-600">- {money(r.amount)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {order.payments.length > 0 && (
         <div className="mt-4">
@@ -368,16 +485,23 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
           </>
         )}
         {!cancelled && (
-          <button onClick={() => { setCancelReason(''); setCancelling(true) }}
-            className="ml-auto text-sm font-medium text-red-600 hover:underline">
-            Cancel order
-          </button>
+          <span className="ml-auto flex gap-4">
+            {order.order_items.some((i) => i.qty > 0) && (
+              <button onClick={() => setReturning(true)} className="text-sm font-medium text-slate-600 hover:underline">
+                Return items
+              </button>
+            )}
+            <button onClick={() => { setCancelReason(''); setCancelling(true) }}
+              className="text-sm font-medium text-red-600 hover:underline">
+              Cancel order
+            </button>
+          </span>
         )}
       </div>
       {shareNote && <p className="mt-3 text-sm text-slate-500">{shareNote}</p>}
 
       {delivering && (
-        <DeliverDialog item={delivering} customerName={order.customers?.name}
+        <DeliverDialog item={delivering} productName={delivering.products.name} customerName={order.customers?.name}
           onClose={() => setDelivering(null)} onDone={() => { setDelivering(null); changed() }} />
       )}
 
@@ -388,6 +512,11 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
               '), including the part that paid other invoices. All of it goes back onto the customer\'s balance.'
             : money(reversing.amount) + ' received on ' + new Date(reversing.paid_at).toLocaleDateString() + ' will be removed and added back to the balance.'}
           onClose={() => setReversing(null)} onConfirm={reversePayment} />
+      )}
+
+      {returning && (
+        <ReturnDialog order={order} paid={paid} isAdmin={isAdmin}
+          onClose={() => setReturning(false)} onDone={() => { setReturning(false); changed() }} />
       )}
 
       {cancelling && (
@@ -452,6 +581,7 @@ export default function Orders() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, refresh)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'refunds' }, refresh)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
