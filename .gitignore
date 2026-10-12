@@ -11,3 +11,4 @@ schema_update_3.sql
 schema_update_4.sql
 README.md
 schema_update_5.sql
+reset_test_data.sql

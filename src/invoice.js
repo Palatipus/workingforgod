@@ -311,23 +311,36 @@ export function invoiceFile(data) {
   return new File([blob], data.invoiceNumber + '.pdf', { type: 'application/pdf' })
 }
 
-function whatsappNumber(phone) {
-  const digits = String(phone || '').replace(/\D/g, '')
-  if (digits.startsWith('0')) return '233' + digits.slice(1)
-  return digits
-}
-
-// Shares the PDF through the phone's share sheet when possible, otherwise opens WhatsApp with a text summary.
+// Opens the device's share sheet so the user can send the PDF to any app.
+// Where sharing isn't supported (e.g. some desktop browsers), it downloads the PDF and copies a summary instead.
 export async function shareInvoice(data) {
   const file = invoiceFile(data)
-  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+  const text = invoiceMessage(data)
+
+  if (navigator.share) {
+    const withFile = navigator.canShare && navigator.canShare({ files: [file] })
+    if (!withFile) downloadInvoice(data)
     try {
-      await navigator.share({ files: [file], title: data.invoiceNumber, text: invoiceMessage(data) })
-      return
+      await navigator.share(withFile ? { files: [file], title: data.invoiceNumber, text } : { title: data.invoiceNumber, text })
+      return withFile ? 'shared' : 'shared-text'
     } catch (err) {
-      if (err.name === 'AbortError') return
+      if (err.name === 'AbortError') return 'cancelled'
     }
+    if (!withFile) return 'downloaded'
   }
-  const to = whatsappNumber(data.customer.phone)
-  window.open('https://wa.me/' + to + '?text=' + encodeURIComponent(invoiceMessage(data)), '_blank')
+
+  downloadInvoice(data)
+  try {
+    await navigator.clipboard.writeText(text)
+    return 'downloaded-copied'
+  } catch {
+    return 'downloaded'
+  }
+}
+
+export function shareNotice(result) {
+  if (result === 'shared-text') return 'The PDF was downloaded. Attach it to your message.'
+  if (result === 'downloaded-copied') return 'Sharing is not available in this browser. The PDF was downloaded and a summary was copied, so you can paste it anywhere.'
+  if (result === 'downloaded') return 'Sharing is not available in this browser. The PDF was downloaded so you can send it.'
+  return ''
 }

@@ -4,7 +4,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import { money, stockStatus, paymentMethods } from '../format'
-import { downloadInvoice, shareInvoice, invoiceNumber, invoiceTotals } from '../invoice'
+import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, invoiceTotals } from '../invoice'
 
 function StepBar({ step }) {
   const names = ['Customer', 'Items', 'Review']
@@ -344,6 +344,7 @@ export default function NewOrder() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(null)
+  const [shareNote, setShareNote] = useState('')
 
   async function loadData() {
     const [c, p, b] = await Promise.all([
@@ -422,6 +423,7 @@ export default function NewOrder() {
     setCustomer(null)
     setLines([])
     setDone(null)
+    setShareNote('')
     loadData()
   }
 
@@ -438,10 +440,11 @@ export default function NewOrder() {
         <p className="mt-1 text-sm text-slate-400">The invoice was downloaded and the admin has been notified.</p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button onClick={() => downloadInvoice(done)} className="btn">Download again</button>
-          <button onClick={() => shareInvoice(done)} className="btn-ghost">Share</button>
+          <button onClick={async () => setShareNote(shareNotice(await shareInvoice(done)))} className="btn-ghost">Share</button>
           <button onClick={reset} className="btn-ghost">New order</button>
           <Link to="/orders" className="btn-ghost">View orders</Link>
         </div>
+        {shareNote && <p className="mt-4 text-sm text-slate-500">{shareNote}</p>}
       </div>
     )
   }

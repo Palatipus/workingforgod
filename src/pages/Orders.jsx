@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from '../components/Modal'
 import { money, paymentMethods, methodLabel } from '../format'
-import { downloadInvoice, shareInvoice, invoiceNumber } from '../invoice'
+import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber } from '../invoice'
 
 function orderTotal(order) {
   let total = 0
@@ -86,6 +86,7 @@ function PaymentForm({ order, balance, onSaved }) {
 
 function OrderDetail({ order, onClose, onChanged }) {
   const [confirmItem, setConfirmItem] = useState(null)
+  const [shareNote, setShareNote] = useState('')
   const total = orderTotal(order)
   const paid = orderPaid(order)
   const balance = orderBalance(order)
@@ -199,8 +200,9 @@ function OrderDetail({ order, onClose, onChanged }) {
 
       <div className="mt-5 flex flex-wrap gap-3">
         <button onClick={() => downloadInvoice(invoiceData())} className="btn-ghost">Download invoice</button>
-        <button onClick={() => shareInvoice(invoiceData())} className="btn-ghost">Share</button>
+        <button onClick={async () => setShareNote(shareNotice(await shareInvoice(invoiceData())))} className="btn-ghost">Share</button>
       </div>
+      {shareNote && <p className="mt-3 text-sm text-slate-500">{shareNote}</p>}
 
       {confirmItem && (
         <Modal title="Mark as delivered?" onClose={() => setConfirmItem(null)}>
