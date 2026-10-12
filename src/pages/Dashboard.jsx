@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import Icon from '../components/Icon'
+import LoadError from '../components/LoadError'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
@@ -60,23 +61,32 @@ function StatCard({ label, value, change, alert, icon, tone, note }) {
   )
 }
 
-function RecentOrders() {
+function RecentOrders({ title = 'Recent orders' }) {
   const navigate = useNavigate()
   const [orders, setOrders] = useState([])
+  const [failed, setFailed] = useState(false)
 
-  useEffect(() => {
+  function load() {
+    setFailed(false)
     supabase
       .from('order_list')
       .select('id, invoice_number, created_at, customer_name, salesperson, total, has_pending, overdue')
       .is('cancelled_at', null)
       .order('created_at', { ascending: false })
       .limit(8)
-      .then(({ data }) => setOrders(data || []))
-  }, [])
+      .then(({ data, error }) => {
+        if (error) setFailed(true)
+        else setOrders(data || [])
+      })
+  }
+
+  useEffect(() => { load() }, [])
+
+  if (failed) return <LoadError onRetry={load} />
 
   return (
     <div className="card">
-      <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">Recent orders</div>
+      <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">{title}</div>
       <div className="overflow-x-auto"><table className="w-full whitespace-nowrap text-sm">
         <thead className="text-left text-xs uppercase text-slate-400">
           <tr>
@@ -225,17 +235,25 @@ function AdminDashboard() {
   const [products, setProducts] = useState([])
   const [people, setPeople] = useState([])
 
+  const [offline, setOffline] = useState(false)
+
   async function loadStats() {
+    setOffline(false)
+    setLoadError('')
     const { data, error } = await supabase.rpc('dashboard_stats')
-    if (error) setLoadError(error.message)
+    // No error code means the request never reached the server (connection problem)
+    if (error && !error.code) setOffline(true)
+    else if (error) setLoadError(error.message)
     else setStats(data)
   }
 
-  useEffect(() => {
+  function loadAll() {
     loadStats()
     supabase.rpc('top_products').then(({ data }) => setProducts(data || []))
     supabase.rpc('top_salespeople').then(({ data }) => setPeople(data || []))
-  }, [])
+  }
+
+  useEffect(() => { loadAll() }, [])
 
   useEffect(() => {
     supabase.rpc('sales_by_day', { p_days: days }).then(({ data }) => {
@@ -243,12 +261,14 @@ function AdminDashboard() {
     })
   }, [days])
 
+  if (offline) return <LoadError onRetry={loadAll} />
+
   if (loadError) {
     return (
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_7.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_8.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -336,14 +356,116 @@ function AdminDashboard() {
   )
 }
 
-function SalespersonDashboard({ name }) {
+function MyCustomersOwing({ userId }) {
+  const navigate = useNavigate()
+  const [rows, setRows] = useState(null)
+  const [failed, setFailed] = useState(false)
+
+  function load() {
+    setFailed(false)
+    supabase.from('order_list')
+      .select('id, invoice_number, customer_id, customer_name, balance, due_date, overdue, created_at')
+      .eq('salesperson_id', userId).is('cancelled_at', null).gt('balance', 0.005)
+      .order('created_at')
+      .then(({ data, error }) => {
+        if (error) setFailed(true)
+        else setRows(data || [])
+      })
+  }
+
+  useEffect(() => { load() }, [userId])
+
+  if (failed) return <LoadError onRetry={load} />
+  if (!rows) return null
+
+  // Group the unpaid invoices by customer
+  const byCustomer = {}
+  for (const r of rows) {
+    const c = byCustomer[r.customer_id] || (byCustomer[r.customer_id] = { name: r.customer_name, owed: 0, overdue: 0, orders: [] })
+    c.owed += Number(r.balance)
+    if (r.overdue) c.overdue += Number(r.balance)
+    c.orders.push(r)
+  }
+  const customers = Object.values(byCustomer).sort((a, b) => b.overdue - a.overdue || b.owed - a.owed)
+
+  return (
+    <div className="card">
+      <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">My customers who owe</div>
+      {customers.length === 0 ? (
+        <EmptyState compact icon="check" title="Nobody owes on your orders" text="Unpaid invoices from your sales will show here." />
+      ) : (
+        <div className="divide-y divide-slate-100">
+          {customers.map((c) => (
+            <div key={c.name + c.orders[0].id} className="px-5 py-3 text-sm">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">{c.name}</span>
+                <span className="text-right">
+                  <span className="font-semibold text-red-600">{money(c.owed)}</span>
+                  {c.overdue > 0 && <span className="block text-xs font-semibold text-red-600">{money(c.overdue)} overdue</span>}
+                </span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {c.orders.map((o) => (
+                  <button key={o.id} onClick={() => navigate('/orders?order=' + o.id)}
+                    className={'rounded-full px-2 py-0.5 text-xs font-medium ' +
+                      (o.overdue ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200')}>
+                    {o.invoice_number}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function SalespersonDashboard({ profile }) {
+  const [stats, setStats] = useState(null)
+  const [failed, setFailed] = useState(false)
+
+  function load() {
+    setFailed(false)
+    supabase.rpc('my_stats').then(({ data, error }) => {
+      if (error) setFailed(true)
+      else setStats(data)
+    })
+  }
+
+  useEffect(() => { load() }, [])
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Hi, {name.split(' ')[0]}</h1>
-        <p className="text-sm text-slate-500">Latest orders from the whole team.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Hi, {profile.full_name.split(' ')[0]}</h1>
+          <p className="text-sm text-slate-500">Your sales this month and what your customers still owe.</p>
+        </div>
+        <Link to="/orders/new" className="btn">+ New order</Link>
       </div>
-      <RecentOrders />
+
+      {failed && <LoadError onRetry={load} />}
+
+      {stats && (
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+          <StatCard label="My sales this month" icon="revenue" tone="blue" note="No sales last month"
+            value={money(stats.sales_this_month)}
+            change={percentChange(stats.sales_this_month, stats.sales_last_month)} />
+          <StatCard label="Cash I collected" icon="check" tone="emerald" note="Payments recorded this month"
+            value={money(stats.cash_this_month)} />
+          <StatCard label="Owed on my orders" icon="users" tone="red"
+            note={stats.overdue_on_my_orders > 0 ? money(stats.overdue_on_my_orders) + ' overdue' : stats.orders_this_month + ' orders this month'}
+            value={money(stats.owed_on_my_orders)} alert={stats.overdue_on_my_orders > 0} />
+          <StatCard label="Still to deliver" icon="truck" tone="amber" note="Items owed on my orders"
+            value={stats.pending_on_my_orders} alert={stats.pending_on_my_orders > 0} />
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <MyCustomersOwing userId={profile.id} />
+        <RecentOrders title="Latest orders from the team" />
+      </div>
     </div>
   )
 }
@@ -351,5 +473,5 @@ function SalespersonDashboard({ name }) {
 export default function Dashboard() {
   const { profile } = useAuth()
   if (profile.role === 'admin') return <AdminDashboard />
-  return <SalespersonDashboard name={profile.full_name} />
+  return <SalespersonDashboard profile={profile} />
 }

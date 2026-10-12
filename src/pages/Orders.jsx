@@ -3,7 +3,9 @@ import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
-import { money, paymentMethods, methodLabel, searchTerm, today } from '../format'
+import LoadError from '../components/LoadError'
+import ReceiptActions from '../components/ReceiptActions'
+import { money, paymentMethods, methodLabel, searchTerm, today, receiptNumber } from '../format'
 import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, loadPdf } from '../invoice'
 
 const PAGE = 50
@@ -27,7 +29,7 @@ function PaymentForm({ order, balance, onSaved }) {
     e.preventDefault()
     setSaving(true)
     setError('')
-    const { error } = await supabase.rpc('record_order_payment', {
+    const { data, error } = await supabase.rpc('record_order_payment', {
       p_order_id: order.id,
       p_amount: Math.round(Number(amount) * 100) / 100,
       p_method: method,
@@ -40,7 +42,7 @@ function PaymentForm({ order, balance, onSaved }) {
     }
     setAmount('')
     setNote('')
-    onSaved()
+    onSaved(data)
   }
 
   return (
@@ -147,18 +149,25 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
   const [order, setOrder] = useState(null)
   const [earlierOwed, setEarlierOwed] = useState(0)
   const [missing, setMissing] = useState(false)
+  const [failed, setFailed] = useState(false)
   const [delivering, setDelivering] = useState(null)
   const [reversing, setReversing] = useState(null)
   const [cancelling, setCancelling] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [shareNote, setShareNote] = useState('')
+  const [newReceipt, setNewReceipt] = useState(null)
 
   async function load() {
-    const { data } = await supabase
+    setFailed(false)
+    const { data, error } = await supabase
       .from('orders')
-      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, products(name)), payments(id, amount, method, note, paid_at)')
+      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount))')
       .eq('id', orderId)
       .maybeSingle()
+    if (error) {
+      setFailed(true)
+      return
+    }
     if (!data) {
       setMissing(true)
       return
@@ -180,6 +189,9 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
     onChanged()
   }
 
+  if (failed && !order) {
+    return <Modal title="Order" onClose={onClose}><LoadError compact onRetry={load} /></Modal>
+  }
   if (missing) {
     return <Modal title="Order not found" onClose={onClose}><p className="text-sm text-slate-500">This order does not exist.</p></Modal>
   }
@@ -318,6 +330,12 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
               <div key={p.id} className="flex items-center justify-between gap-3 py-2">
                 <span className="text-slate-600">
                   {new Date(p.paid_at).toLocaleDateString()} · {methodLabel(p.method)}{p.note ? ' · ' + p.note : ''}
+                  {p.receipts && (
+                    <span className="block text-xs">
+                      <span className="text-slate-400">{receiptNumber(p.receipts.receipt_number)}</span>{' '}
+                      <ReceiptActions receiptId={p.receipt_id} label="" className="ml-1" />
+                    </span>
+                  )}
                 </span>
                 <span className="flex items-center gap-3">
                   <span className="font-semibold">{money(p.amount)}</span>
@@ -331,7 +349,16 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
         </div>
       )}
 
-      {!cancelled && balance > 0.005 && <PaymentForm order={order} balance={balance} onSaved={changed} />}
+      {newReceipt && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span className="font-medium">Payment saved.</span>
+          <ReceiptActions receiptId={newReceipt} />
+        </div>
+      )}
+
+      {!cancelled && balance > 0.005 && (
+        <PaymentForm order={order} balance={balance} onSaved={(id) => { setNewReceipt(id); changed() }} />
+      )}
 
       <div className="mt-5 flex flex-wrap items-center gap-3">
         {!cancelled && (
@@ -356,7 +383,10 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
 
       {reversing && (
         <ConfirmDialog title="Reverse this payment?" confirmLabel="Yes, reverse"
-          text={money(reversing.amount) + ' received on ' + new Date(reversing.paid_at).toLocaleDateString() + ' will be removed and added back to the balance.'}
+          text={reversing.receipts && Number(reversing.receipts.amount) > Number(reversing.amount) + 0.005
+            ? 'This reverses the whole receipt ' + receiptNumber(reversing.receipts.receipt_number) + ' (' + money(reversing.receipts.amount) +
+              '), including the part that paid other invoices. All of it goes back onto the customer\'s balance.'
+            : money(reversing.amount) + ' received on ' + new Date(reversing.paid_at).toLocaleDateString() + ' will be removed and added back to the balance.'}
           onClose={() => setReversing(null)} onConfirm={reversePayment} />
       )}
 
@@ -382,6 +412,7 @@ export default function Orders() {
   const [limit, setLimit] = useState(PAGE)
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
@@ -403,8 +434,9 @@ export default function Orders() {
     if (filter === 'overdue') q = q.eq('overdue', true)
     if (filter === 'pending') q = q.eq('has_pending', true)
     if (filter === 'cancelled') q = q.not('cancelled_at', 'is', null)
-    q.then(({ data }) => {
+    q.then(({ data, error }) => {
       if (!active) return
+      setLoadFailed(!!error)
       const list = data || []
       setHasMore(list.length > limit)
       setRows(list.slice(0, limit))
@@ -489,12 +521,14 @@ export default function Orders() {
                 </tr>
               )
             })}
-            {!loading && rows.length === 0 && (
+            {!loading && !loadFailed && rows.length === 0 && (
               <tr><td colSpan="6" className="px-5 py-12 text-center text-slate-400">No orders found</td></tr>
             )}
           </tbody>
         </table>
       </div>
+
+      {loadFailed && <LoadError onRetry={() => setVersion((v) => v + 1)} />}
 
       {hasMore && (
         <div className="flex justify-center">

@@ -9,21 +9,30 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
   const [profileReady, setProfileReady] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const [profileError, setProfileError] = useState(false)
   const lastUserId = useRef(null)
+  const profileLoaded = useRef(false)
 
   async function loadProfile(userId) {
     try {
-      const { data } = await supabase.from('profiles').select('*').eq('id', userId).single()
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
+      if (error) throw error
       setProfile(data)
+      setProfileError(false)
+      profileLoaded.current = true
     } catch (err) {
       setProfile(null)
+      setProfileError(true)
     }
   }
 
   useEffect(() => {
     let active = true
+    // On a very slow connection, stop the spinner after 6s and show "Can't connect" (with retry)
+    // instead of wrongly showing "Waiting for approval". A late answer still lets the user in.
     const fallback = setTimeout(() => {
       if (active) {
+        if (!profileLoaded.current) setProfileError(true)
         setLoading(false)
         setProfileReady(true)
       }
@@ -52,7 +61,9 @@ export function AuthProvider({ children }) {
 
       if (!newSession) {
         lastUserId.current = null
+        profileLoaded.current = false
         setProfile(null)
+        setProfileError(false)
         return
       }
 
@@ -93,7 +104,7 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut()
   }
 
-  const value = { session, profile, loading, profileReady, recovering, setRecovering, refreshProfile, signOut }
+  const value = { session, profile, profileError, loading, profileReady, recovering, setRecovering, refreshProfile, signOut }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 

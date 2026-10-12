@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import UsernameDialog from '../components/UsernameDialog'
+import LoadError from '../components/LoadError'
 
 const statusBadge = {
   approved: ['Active', 'bg-emerald-50 text-emerald-700'],
@@ -43,10 +44,12 @@ export default function Team() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [renaming, setRenaming] = useState(null)
+  const [loadFailed, setLoadFailed] = useState(false)
 
   async function load() {
-    const { data } = await supabase.from('profiles').select('id, full_name, username, role, status, created_at').order('full_name')
-    setPeople(data || [])
+    const { data, error } = await supabase.from('profiles').select('id, full_name, username, role, status, created_at').order('full_name')
+    setLoadFailed(!!error)
+    if (!error) setPeople(data || [])
   }
 
   useEffect(() => { load() }, [])
@@ -74,6 +77,8 @@ export default function Team() {
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Team</h1>
         <p className="text-sm text-slate-500">Approve new people, remove people who have left and choose who is an admin.</p>
       </div>
+
+      {loadFailed && <LoadError onRetry={load} />}
 
       <div className="overflow-x-auto card">
         <table className="w-full whitespace-nowrap text-sm">

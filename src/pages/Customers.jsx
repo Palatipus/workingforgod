@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from '../components/Modal'
+import LoadError from '../components/LoadError'
+import ReceiptActions from '../components/ReceiptActions'
 import { money, paymentMethods } from '../format'
 import { downloadStatement, shareStatement, shareNotice, loadPdf, invoiceNumber } from '../invoice'
 
@@ -16,7 +18,7 @@ function CustomerPayment({ customer, onClose, onSaved }) {
     e.preventDefault()
     setSaving(true)
     setError('')
-    const { error } = await supabase.rpc('record_customer_payment', {
+    const { data, error } = await supabase.rpc('record_customer_payment', {
       p_customer_id: customer.customer_id,
       p_amount: Math.round(Number(amount) * 100) / 100,
       p_method: method,
@@ -27,7 +29,7 @@ function CustomerPayment({ customer, onClose, onSaved }) {
       setSaving(false)
       return
     }
-    onSaved()
+    onSaved(data)
   }
 
   return (
@@ -153,9 +155,16 @@ export default function Customers() {
   const [paying, setPaying] = useState(null)
   const [editing, setEditing] = useState(null)
   const [shareNote, setShareNote] = useState('')
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [newReceipt, setNewReceipt] = useState(null)
 
   async function load() {
-    const { data } = await supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name')
+    const { data, error } = await supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name')
+    if (error) {
+      setLoadFailed(true)
+      return
+    }
+    setLoadFailed(false)
     setRows(data || [])
   }
 
@@ -210,6 +219,18 @@ export default function Customers() {
 
       {shareNote && <p className="text-sm text-slate-500">{shareNote}</p>}
 
+      {newReceipt && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          <span className="font-medium">Payment from {newReceipt.name} saved.</span>
+          <span className="flex items-center gap-4">
+            <ReceiptActions receiptId={newReceipt.id} />
+            <button onClick={() => setNewReceipt(null)} aria-label="Dismiss" className="text-emerald-700">✕</button>
+          </span>
+        </div>
+      )}
+
+      {loadFailed && <LoadError onRetry={load} />}
+
       <div className="overflow-x-auto card">
         <table className="w-full whitespace-nowrap text-sm">
           <thead className="text-left text-xs uppercase text-slate-400">
@@ -254,7 +275,7 @@ export default function Customers() {
                 </tr>
               )
             })}
-            {shown.length === 0 && (
+            {!loadFailed && shown.length === 0 && (
               <tr><td colSpan="7" className="px-5 py-12 text-center text-slate-400">No customers found</td></tr>
             )}
           </tbody>
@@ -268,7 +289,7 @@ export default function Customers() {
 
       {paying && (
         <CustomerPayment customer={paying} onClose={() => setPaying(null)}
-          onSaved={() => { setPaying(null); load() }} />
+          onSaved={(id) => { setNewReceipt({ id, name: paying.name }); setPaying(null); load() }} />
       )}
     </div>
   )

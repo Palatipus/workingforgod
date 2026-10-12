@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
+import LoadError from '../components/LoadError'
+import ReceiptActions from '../components/ReceiptActions'
 import { money, stockStatus, paymentMethods, today } from '../format'
 import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, invoiceTotals, loadPdf } from '../invoice'
 
@@ -296,8 +298,13 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
   const [notes, setNotes] = useState('')
 
   const paidNum = Math.round(Number(paid || 0) * 100) / 100
-  const paidOk = paidNum >= 0 && paidNum <= total + 0.001
-  const balance = Math.max(0, total - paidNum)
+  const maxPaid = total + previousBalance
+  const paidOk = paidNum >= 0 && paidNum <= maxPaid + 0.001
+  // Money goes to this order first; anything above clears earlier debt
+  const onOrder = Math.min(paidNum, total)
+  const towardOld = Math.max(0, paidNum - total)
+  const balance = Math.max(0, total - onOrder)
+  const prevAfter = Math.max(0, previousBalance - towardOld)
   const owed = lines.filter((l) => Number(l.qty) > l.product.stock_qty)
 
   return (
@@ -333,11 +340,18 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
         <div>
           <div className="flex items-center justify-between">
             <label className="text-xs text-slate-500">Amount paid now (GH₵)</label>
-            <button type="button" onClick={() => setPaid(total.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
-              Full
-            </button>
+            <span className="flex gap-2">
+              <button type="button" onClick={() => setPaid(total.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
+                This order
+              </button>
+              {previousBalance > 0 && (
+                <button type="button" onClick={() => setPaid(maxPaid.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
+                  + old debt
+                </button>
+              )}
+            </span>
           </div>
-          <input className={'input ' + (paidOk ? '' : '!border-red-400')} type="number" min="0" step="0.01" max={total}
+          <input className={'input ' + (paidOk ? '' : '!border-red-400')} type="number" min="0" step="0.01" max={maxPaid}
             placeholder="0.00" value={paid} onChange={(e) => setPaid(e.target.value)} />
         </div>
         <div>
@@ -357,17 +371,21 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
         <div className="flex justify-between"><span className="text-slate-500">Balance on this order</span>
           <span className={'font-semibold ' + (balance > 0.005 ? 'text-red-600' : 'text-emerald-600')}>{money(balance)}</span></div>
         {previousBalance > 0 && (
-          <div className="flex justify-between"><span className="text-slate-500">Previous balance</span>
+          <div className="flex justify-between"><span className="text-slate-500">Owed from earlier orders</span>
             <span className="font-semibold text-amber-700">{money(previousBalance)}</span></div>
         )}
+        {towardOld > 0 && (
+          <div className="flex justify-between"><span className="text-slate-500">Paid toward earlier orders now</span>
+            <span className="font-semibold text-emerald-600">- {money(towardOld)}</span></div>
+        )}
         <div className="flex justify-between border-t border-slate-200 pt-2"><span className="font-semibold">Total due after this order</span>
-          <span className="font-bold">{money(balance + previousBalance)}</span></div>
+          <span className="font-bold">{money(balance + prevAfter)}</span></div>
       </div>
 
       <textarea className="input mt-4" rows="2" placeholder="Note for this order (optional, printed on the invoice)"
         value={notes} onChange={(e) => setNotes(e.target.value)} />
 
-      {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid must be between 0 and the order total.</div>}
+      {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid can be at most {money(maxPaid)} (this order plus what they owe).</div>}
       {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
 
       <div className="mt-6 flex justify-end gap-3">
@@ -395,14 +413,20 @@ export default function NewOrder() {
   const [error, setError] = useState('')
   const [done, setDone] = useState(null)
   const [lastPrices, setLastPrices] = useState({})
+  const [loadFailed, setLoadFailed] = useState(false)
   const [shareNote, setShareNote] = useState('')
 
   async function loadData() {
+    setLoadFailed(false)
     const [c, p, b] = await Promise.all([
       supabase.from('customers').select('*').order('name'),
       supabase.from('products').select('*').eq('is_active', true).order('name'),
       supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0),
     ])
+    if (c.error || p.error || b.error) {
+      setLoadFailed(true)
+      return
+    }
     setCustomers(c.data || [])
     setProducts(p.data || [])
     const owed = {}
@@ -464,15 +488,19 @@ export default function NewOrder() {
 
     // Build the invoice from what was actually saved (stock may have changed since this page loaded)
     const { data: order } = await supabase.from('orders')
-      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, products(name))')
+      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, products(name)), payments(receipt_id)')
       .eq('id', orderId).single()
+    let saved = 0
+    for (const item of order.order_items) saved += item.qty * Number(item.price)
     const invoice = {
+      receiptId: order.payments[0]?.receipt_id || null,
+      paidTowardOld: Math.max(0, paid - saved),
       invoiceNumber: invoiceNumber(order.order_number),
       date: order.created_at,
       dueDate: order.due_date,
       customer,
       salesperson: profile.full_name,
-      paid,
+      paid: Math.min(paid, saved),
       previousBalance: Number(order.previous_balance),
       notes: order.notes,
       items: order.order_items.map((item) => ({
@@ -504,10 +532,15 @@ export default function NewOrder() {
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-2xl text-emerald-600">✓</div>
         <h1 className="mt-5 text-xl font-bold">Invoice {done.invoiceNumber} created</h1>
         <p className="mt-1 text-sm text-slate-500">{done.customer.name} · {money(t.subtotal)} · paid {money(t.paid)}</p>
+        {done.paidTowardOld > 0 && (
+          <p className="mt-1 text-sm text-emerald-700">Plus {money(done.paidTowardOld)} paid toward earlier orders</p>
+        )}
         {t.totalDue > 0.005 && (
           <p className="mt-1 text-sm font-medium text-red-600">Customer now owes {money(t.totalDue)}</p>
         )}
-        <p className="mt-1 text-sm text-slate-400">The invoice was downloaded and the admin has been notified.</p>
+        <p className="mt-1 text-sm text-slate-400">
+          The invoice was downloaded{profile.role === 'admin' ? '.' : ' and the admins have been notified.'}
+        </p>
         <div className="mt-8 flex flex-wrap justify-center gap-3">
           <button onClick={() => downloadInvoice(done)} className="btn">Download again</button>
           <button onClick={async () => setShareNote(shareNotice(await shareInvoice(done)))} className="btn-ghost">Share</button>
@@ -515,6 +548,12 @@ export default function NewOrder() {
           <Link to="/orders" className="btn-ghost">View orders</Link>
         </div>
         {shareNote && <p className="mt-4 text-sm text-slate-500">{shareNote}</p>}
+        {done.receiptId && (
+          <div className="mt-6 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+            <div className="font-medium">Receipt for the {money(t.paid + done.paidTowardOld)} received</div>
+            <ReceiptActions receiptId={done.receiptId} className="mt-1 block" />
+          </div>
+        )}
       </div>
     )
   }
@@ -536,6 +575,8 @@ export default function NewOrder() {
         </div>
         <StepBar step={step} />
       </div>
+
+      {loadFailed && <LoadError onRetry={loadData} />}
 
       {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
 

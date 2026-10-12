@@ -42,3 +42,25 @@ export function validUsername(name) {
 }
 
 export const usernameRule = 'Username must be 3-30 characters: letters, numbers, dots, dashes or underscores.'
+
+export function receiptNumber(n) {
+  return 'RCT' + String(n).padStart(4, '0')
+}
+
+export const adjustReasons = [
+  ['correction', 'Correction (wrong count)'],
+  ['damaged', 'Damaged'],
+  ['expired', 'Expired'],
+  ['lost', 'Lost or missing'],
+  ['returned', 'Returned to supplier'],
+  ['other', 'Other'],
+]
+
+export const movementLabels = {
+  opening: 'Starting stock',
+  received: 'Stock received',
+  sale: 'Sold',
+  delivery: 'Delivered (owed item)',
+  cancel: 'Order cancelled',
+  adjustment: 'Adjustment',
+}

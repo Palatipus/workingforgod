@@ -4,6 +4,7 @@ import { useAuth } from '../AuthContext'
 import NotificationBell from './NotificationBell'
 import Icon from './Icon'
 import UsernameDialog from './UsernameDialog'
+import { useInstallPrompt } from '../install'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: 'home' },
@@ -17,6 +18,7 @@ export default function Layout() {
   const { profile, signOut, refreshProfile } = useAuth()
   // Ask people without a username to pick one (accounts made before usernames existed)
   const [usernameOpen, setUsernameOpen] = useState(!profile.username)
+  const { available: canInstall, install } = useInstallPrompt()
   const isAdmin = profile.role === 'admin'
   const sideLinks = isAdmin ? [...links, { to: '/team', label: 'Team', icon: 'team' }] : links
 
@@ -59,7 +61,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 p-4 pb-24 md:p-8 md:pb-8">
+      <main className="min-w-0 flex-1 p-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-8 md:pb-8">
         <div className="mb-4 flex items-center justify-between md:mb-6 md:justify-end">
           <button onClick={() => setUsernameOpen(true)} className="flex items-center gap-2 text-left md:hidden">
             <img src="/logo.png" alt="" className="h-9 w-9" />
@@ -69,6 +71,12 @@ export default function Layout() {
             </span>
           </button>
           <div className="flex items-center gap-2">
+            {canInstall && (
+              <button onClick={install}
+                className="rounded-full bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-700">
+                Install app
+              </button>
+            )}
             {isAdmin && (
               <Link to="/team" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 md:hidden">
                 Team
@@ -92,7 +100,7 @@ export default function Layout() {
           onSaved={async () => { await refreshProfile(); setUsernameOpen(false) }} />
       )}
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white pb-[env(safe-area-inset-bottom)] md:hidden">
         {links.map((link) => (
           <NavLink key={link.to} to={link.to} end={link.to === '/'}
             className={({ isActive }) =>

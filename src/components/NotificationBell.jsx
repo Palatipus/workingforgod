@@ -53,7 +53,8 @@ export default function NotificationBell() {
       await supabase.from('notifications').update({ is_read: true }).eq('id', n.id)
       load()
     }
-    if (n.order_id) navigate('/orders?order=' + n.order_id)
+    if (n.link) navigate(n.link)
+    else if (n.order_id) navigate('/orders?order=' + n.order_id)
     else if (profile.role === 'admin' && n.message.includes('waiting for approval')) navigate('/team')
   }
 

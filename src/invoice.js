@@ -514,6 +514,116 @@ export async function shareStatement(data) {
   return sharePdf(file, 'Statement', statementMessage(data), () => downloadStatement(data))
 }
 
+// RECEIPT ---------------------------------------------------------------
+// data: { receiptNumber, date, customer, amount, method, note, receivedBy,
+//         allocations: [{ invoiceNumber, amount }], balanceAfter (or null), reversed }
+
+export function buildReceipt(data, { jsPDF, autoTable, logoData }) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+
+  drawHeader(doc, logoData, 'RECEIPT', ['No. ' + data.receiptNumber, 'Date: ' + shortDate(data.date)])
+
+  if (data.reversed) {
+    doc.setFillColor(...RED)
+    doc.roundedRect(W - M - 32, 49, 32, 7.5, 3.75, 3.75, 'F')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8.5)
+    doc.setTextColor(255, 255, 255)
+    doc.text('REVERSED', W - M - 16, 54, { align: 'center' })
+  }
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...BLUE)
+  doc.text('RECEIVED FROM', M, 54)
+  doc.setFontSize(12)
+  doc.setTextColor(...TEXT)
+  doc.text(data.customer.name, M, 60)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(...MUTED)
+  const contact = [data.customer.phone, data.customer.location].filter(Boolean).join('   |   ')
+  if (contact) doc.text(contact, M, 65.5)
+
+  // Amount box
+  const y = 74
+  doc.setFillColor(...(data.reversed ? MUTED : OK))
+  doc.roundedRect(M, y, W - 2 * M, 22, 3, 3, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.text('AMOUNT RECEIVED', M + 6, y + 8)
+  doc.setFontSize(18)
+  doc.text(fmt(data.amount), M + 6, y + 17)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.text('Paid by ' + (methodNames[data.method] || data.method), W - M - 6, y + 9, { align: 'right' })
+  if (data.receivedBy) doc.text('Received by ' + data.receivedBy, W - M - 6, y + 15, { align: 'right' })
+
+  let ty = y + 30
+  if (data.allocations.length > 0) {
+    autoTable(doc, {
+      startY: ty,
+      head: [['Applied to invoice', 'Amount']],
+      body: data.allocations.map((a) => [a.invoiceNumber, fmt(a.amount)]),
+      margin: { left: M, right: M },
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: 3, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', lineWidth: 0 },
+      columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+    })
+    ty = doc.lastAutoTable.finalY + 8
+  }
+
+  if (data.note) {
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...MUTED)
+    const lines = doc.splitTextToSize('Note: ' + data.note, W - 2 * M).slice(0, 3)
+    doc.text(lines, M, ty)
+    ty += lines.length * 4 + 4
+  }
+
+  if (!data.reversed && data.balanceAfter !== null && data.balanceAfter !== undefined) {
+    const owes = Number(data.balanceAfter) > 0.005
+    doc.setFillColor(...SOFT)
+    doc.setDrawColor(...LINE)
+    doc.roundedRect(M, ty, W - 2 * M, 14, 3, 3, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(...(owes ? RED : OK))
+    doc.text(owes ? 'Balance still owed after this payment' : 'All invoices are now fully paid', M + 6, ty + 8.8)
+    if (owes) doc.text(fmt(data.balanceAfter), W - M - 6, ty + 8.8, { align: 'right' })
+  }
+
+  drawFooter(doc)
+  return doc
+}
+
+export function receiptMessage(data) {
+  const lines = [
+    'Receipt ' + data.receiptNumber + ' - ' + company.name,
+    'Received from: ' + data.customer.name,
+    'Date: ' + shortDate(data.date),
+    'Amount: ' + fmt(data.amount) + ' (' + (methodNames[data.method] || data.method) + ')',
+  ]
+  if (data.allocations.length > 0) lines.push('For: ' + data.allocations.map((a) => a.invoiceNumber).join(', '))
+  if (data.balanceAfter !== null && data.balanceAfter !== undefined) {
+    lines.push(Number(data.balanceAfter) > 0.005 ? 'Balance still owed: ' + fmt(data.balanceAfter) : 'All invoices fully paid. Thank you!')
+  }
+  return lines.join('\n')
+}
+
+export async function downloadReceipt(data) {
+  buildReceipt(data, await loadPdf()).save(data.receiptNumber + '.pdf')
+}
+
+export async function shareReceipt(data) {
+  const blob = buildReceipt(data, await loadPdf()).output('blob')
+  const file = new File([blob], data.receiptNumber + '.pdf', { type: 'application/pdf' })
+  return sharePdf(file, data.receiptNumber, receiptMessage(data), () => downloadReceipt(data))
+}
+
 export function shareNotice(result) {
   if (result === 'shared-text') return 'The PDF was downloaded. Attach it to your message.'
   if (result === 'downloaded-copied') return 'Sharing is not available in this browser. The PDF was downloaded and a summary was copied, so you can paste it anywhere.'

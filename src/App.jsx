@@ -24,7 +24,7 @@ function page(element) {
 }
 
 export default function App() {
-  const { session, profile, loading, profileReady, recovering } = useAuth()
+  const { session, profile, profileError, loading, profileReady, recovering, refreshProfile, signOut } = useAuth()
 
   if (missingConfig) {
     return (
@@ -46,6 +46,21 @@ export default function App() {
 
   if (recovering) return <ResetPassword />
   if (!session) return <Login />
+  if (!profile && profileError) {
+    return (
+      <div className="flex min-h-screen items-center justify-center p-6">
+        <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">
+          <img src="/logo.png" alt="" className="mx-auto mb-5 h-16 w-16" />
+          <h1 className="text-xl font-bold">Can't connect</h1>
+          <p className="mt-2 text-sm text-slate-500">We couldn't reach the server. Check your internet connection and try again.</p>
+          <div className="mt-6 flex justify-center gap-3">
+            <button onClick={refreshProfile} className="btn">Try again</button>
+            <button onClick={signOut} className="btn-ghost">Sign out</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
   if (!profile || profile.status !== 'approved') return <Pending />
 
   return (
