@@ -268,7 +268,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_9.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_10.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -279,9 +279,12 @@ function AdminDashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
-        <p className="text-sm text-slate-500">Stock, orders and sales at a glance.</p>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
+          <p className="text-sm text-slate-500">Stock, orders and sales at a glance.</p>
+        </div>
+        <Link to="/reports" className="btn-ghost">Reports and exports</Link>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">

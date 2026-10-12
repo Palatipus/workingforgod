@@ -64,3 +64,7 @@ export const movementLabels = {
   cancel: 'Order cancelled',
   adjustment: 'Adjustment',
 }
+
+export function refundNumber(n) {
+  return 'RFN' + String(n).padStart(4, '0')
+}

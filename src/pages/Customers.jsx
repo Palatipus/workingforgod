@@ -112,17 +112,24 @@ function EditCustomer({ customer, onClose, onSaved }) {
 }
 
 async function statementData(row) {
-  const [orders, payments] = await Promise.all([
+  const [orders, payments, refunds] = await Promise.all([
     supabase.from('order_list').select('id, invoice_number, created_at, due_date, total, paid, balance, overdue')
       .eq('customer_id', row.customer_id).is('cancelled_at', null).order('created_at'),
     supabase.from('payments').select('amount, method, paid_at, orders!inner(order_number, customer_id)')
       .eq('orders.customer_id', row.customer_id).order('paid_at'),
+    supabase.from('refunds').select('amount, method, created_at, orders!inner(order_number, customer_id)')
+      .eq('orders.customer_id', row.customer_id),
   ])
+  if (orders.error || payments.error || refunds.error) throw new Error('load failed')
+  const money = [
+    ...(payments.data || []).map((p) => ({ ...p, refund: false })),
+    ...(refunds.data || []).map((r) => ({ ...r, paid_at: r.created_at, refund: true })),
+  ].sort((a, b) => a.paid_at.localeCompare(b.paid_at))
   return {
     customer: { name: row.name, phone: row.phone, location: row.location },
     date: new Date().toISOString(),
     orders: orders.data || [],
-    payments: (payments.data || []).map((p) => ({
+    payments: money.map((p) => ({
       ...p,
       invoice_number: invoiceNumber(p.orders.order_number),
     })),
@@ -134,9 +141,13 @@ function StatementButtons({ row, onNote }) {
 
   async function run(share) {
     setBusy(true)
-    const data = await statementData(row)
-    if (share) onNote(shareNotice(await shareStatement(data)))
-    else await downloadStatement(data)
+    try {
+      const data = await statementData(row)
+      if (share) onNote(shareNotice(await shareStatement(data)))
+      else await downloadStatement(data)
+    } catch {
+      onNote('Could not make the statement. Check your connection and try again.')
+    }
     setBusy(false)
   }
 

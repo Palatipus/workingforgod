@@ -503,7 +503,7 @@ export default function NewOrder() {
 
     // Build the invoice from what was actually saved (stock may have changed since this page loaded)
     const { data: order } = await supabase.from('orders')
-      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, products(name)), payments(receipt_id)')
+      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, product_name, products(name)), payments(receipt_id)')
       .eq('id', orderId).single()
     let saved = 0
     for (const item of order.order_items) saved += item.qty * Number(item.price)
@@ -519,7 +519,7 @@ export default function NewOrder() {
       previousBalance: Number(order.previous_balance),
       notes: order.notes,
       items: order.order_items.map((item) => ({
-        name: item.products.name,
+        name: item.product_name || item.products.name,
         qty: item.qty,
         price: Number(item.price),
         pending_qty: item.pending_qty,

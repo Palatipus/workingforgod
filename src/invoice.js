@@ -462,11 +462,19 @@ export function buildStatement(data, { jsPDF, autoTable, logoData }) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(7.5)
     doc.setTextColor(...BLUE)
-    doc.text('PAYMENTS RECEIVED', M, y)
+    doc.text(data.payments.some((p) => p.refund) ? 'PAYMENTS AND REFUNDS' : 'PAYMENTS RECEIVED', M, y)
     autoTable(doc, {
       startY: y + 2,
       head: [['Date', 'Invoice', 'Method', 'Amount']],
-      body: data.payments.map((p) => [shortDate(p.paid_at), p.invoice_number, methodNames[p.method] || p.method, fmt(p.amount)]),
+      body: data.payments.map((p) => [
+        shortDate(p.paid_at),
+        p.invoice_number,
+        (p.refund ? 'Refund, ' : '') + (methodNames[p.method] || p.method),
+        (p.refund ? '- ' : '') + fmt(p.amount),
+      ]),
+      didParseCell: (hook) => {
+        if (hook.section === 'body' && String(hook.row.raw[2]).startsWith('Refund')) hook.cell.styles.textColor = RED
+      },
       margin: { left: M, right: M },
       theme: 'plain',
       styles: { fontSize: 8.5, cellPadding: 2.4, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
@@ -622,6 +630,90 @@ export async function shareReceipt(data) {
   const blob = buildReceipt(data, await loadPdf()).output('blob')
   const file = new File([blob], data.receiptNumber + '.pdf', { type: 'application/pdf' })
   return sharePdf(file, data.receiptNumber, receiptMessage(data), () => downloadReceipt(data))
+}
+
+// REFUND NOTE -------------------------------------------------------------
+// data: { refundNumber, date, customer, amount, method, note, invoiceNumber, by, items: [{ name, qty }] }
+
+export function buildRefund(data, { jsPDF, autoTable, logoData }) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+
+  drawHeader(doc, logoData, 'REFUND', ['No. ' + data.refundNumber, 'Date: ' + shortDate(data.date)])
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...BLUE)
+  doc.text('REFUNDED TO', M, 54)
+  doc.setFontSize(12)
+  doc.setTextColor(...TEXT)
+  doc.text(data.customer.name, M, 60)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(...MUTED)
+  const contact = [data.customer.phone, data.customer.location].filter(Boolean).join('   |   ')
+  if (contact) doc.text(contact, M, 65.5)
+
+  const y = 74
+  doc.setFillColor(...RED)
+  doc.roundedRect(M, y, W - 2 * M, 22, 3, 3, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(8)
+  doc.text('AMOUNT REFUNDED', M + 6, y + 8)
+  doc.setFontSize(18)
+  doc.text(fmt(data.amount), M + 6, y + 17)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.text('Paid by ' + (methodNames[data.method] || data.method), W - M - 6, y + 9, { align: 'right' })
+  doc.text('For invoice ' + data.invoiceNumber, W - M - 6, y + 15, { align: 'right' })
+
+  let ty = y + 30
+  if (data.items.length > 0) {
+    autoTable(doc, {
+      startY: ty,
+      head: [['Items returned', 'Qty']],
+      body: data.items.map((i) => [i.name, i.qty]),
+      margin: { left: M, right: M },
+      theme: 'plain',
+      styles: { fontSize: 9, cellPadding: 3, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
+      headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', lineWidth: 0 },
+      columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
+    })
+    ty = doc.lastAutoTable.finalY + 8
+  }
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...MUTED)
+  if (data.note) {
+    const lines = doc.splitTextToSize('Reason: ' + data.note, W - 2 * M).slice(0, 3)
+    doc.text(lines, M, ty)
+    ty += lines.length * 4 + 3
+  }
+  if (data.by) doc.text('Refund made by ' + data.by, M, ty)
+
+  drawFooter(doc)
+  return doc
+}
+
+export function refundMessage(data) {
+  return [
+    'Refund ' + data.refundNumber + ' - ' + company.name,
+    'To: ' + data.customer.name,
+    'Date: ' + shortDate(data.date),
+    'Amount refunded: ' + fmt(data.amount) + ' (' + (methodNames[data.method] || data.method) + ')',
+    'For invoice ' + data.invoiceNumber,
+  ].join('\n')
+}
+
+export async function downloadRefund(data) {
+  buildRefund(data, await loadPdf()).save(data.refundNumber + '.pdf')
+}
+
+export async function shareRefund(data) {
+  const blob = buildRefund(data, await loadPdf()).output('blob')
+  const file = new File([blob], data.refundNumber + '.pdf', { type: 'application/pdf' })
+  return sharePdf(file, data.refundNumber, refundMessage(data), () => downloadRefund(data))
 }
 
 export function shareNotice(result) {

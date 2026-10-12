@@ -25,7 +25,9 @@ export default function Layout() {
   const { available: canInstall, install } = useInstallPrompt()
   const online = useOnline()
   const isAdmin = profile.role === 'admin'
-  const sideLinks = isAdmin ? [...links, { to: '/team', label: 'Team', icon: 'team' }] : links
+  const sideLinks = isAdmin
+    ? [...links, { to: '/reports', label: 'Reports', icon: 'chart' }, { to: '/team', label: 'Team', icon: 'team' }]
+    : links
 
   return (
     <div className="flex min-h-screen">

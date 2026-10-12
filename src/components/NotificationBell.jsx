@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 
+// Where tapping a notification takes you
+export function notificationTarget(n, profile) {
+  if (n.link) return n.link
+  if (n.order_id) return '/orders?order=' + n.order_id
+  if (profile.role === 'admin' && n.message.includes('waiting for approval')) return '/team'
+  return null
+}
+
 export default function NotificationBell() {
   const { profile } = useAuth()
   const navigate = useNavigate()
@@ -53,9 +61,8 @@ export default function NotificationBell() {
       await supabase.from('notifications').update({ is_read: true }).eq('id', n.id)
       load()
     }
-    if (n.link) navigate(n.link)
-    else if (n.order_id) navigate('/orders?order=' + n.order_id)
-    else if (profile.role === 'admin' && n.message.includes('waiting for approval')) navigate('/team')
+    const target = notificationTarget(n, profile)
+    if (target) navigate(target)
   }
 
   async function markAllRead() {
@@ -98,6 +105,10 @@ export default function NotificationBell() {
             ))}
             {items.length === 0 && <div className="px-4 py-8 text-center text-sm text-slate-400">Nothing yet</div>}
           </div>
+          <button onClick={() => { setOpen(false); navigate('/notifications') }}
+            className="block w-full border-t border-slate-100 px-4 py-3 text-center text-sm font-medium text-indigo-600 hover:bg-slate-50">
+            See all notifications
+          </button>
         </div>
       )}
     </div>

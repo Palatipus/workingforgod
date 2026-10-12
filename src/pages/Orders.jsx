@@ -4,9 +4,10 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
-import ReceiptActions from '../components/ReceiptActions'
+import ReceiptActions, { RefundActions } from '../components/ReceiptActions'
 import DeliverDialog from '../components/DeliverDialog'
-import { money, paymentMethods, methodLabel, searchTerm, today, receiptNumber } from '../format'
+import DateRange, { applyRange } from '../components/DateRange'
+import { money, paymentMethods, methodLabel, searchTerm, today, receiptNumber, refundNumber } from '../format'
 import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, loadPdf } from '../invoice'
 
 const PAGE = 50
@@ -107,6 +108,11 @@ function ConfirmDialog({ title, text, confirmLabel, children, onClose, onConfirm
   )
 }
 
+// The name the item was sold under (kept even if the product is renamed later)
+function itemLabel(item) {
+  return item.product_name || item.products?.name
+}
+
 function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
   const lines = order.order_items.filter((i) => i.qty > 0)
   const [qtys, setQtys] = useState({})
@@ -135,7 +141,7 @@ function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
     setSaving(true)
     setError('')
     const items = lines.filter((i) => Number(qtys[i.id] || 0) > 0).map((i) => ({ item_id: i.id, qty: Number(qtys[i.id]) }))
-    const { error } = await supabase.rpc('return_items', {
+    const { data, error } = await supabase.rpc('return_items', {
       p_order_id: order.id, p_items: items, p_reason: reason || null, p_restock: restock, p_refund_method: method,
     })
     setSaving(false)
@@ -143,7 +149,7 @@ function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
       setError(error.message)
       return
     }
-    onDone()
+    onDone(Number(data || 0))
   }
 
   return (
@@ -157,7 +163,7 @@ function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
         {lines.map((i) => (
           <div key={i.id} className="flex flex-wrap items-center justify-between gap-3 py-3">
             <div>
-              <div className="font-medium">{i.products.name}</div>
+              <div className="font-medium">{itemLabel(i)}</div>
               <div className="text-xs text-slate-400">
                 {i.qty} on order{i.pending_qty > 0 ? ' · ' + i.pending_qty + ' not delivered yet' : ''} · {money(i.price)} each
               </div>
@@ -233,6 +239,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
   const [reversing, setReversing] = useState(null)
   const [cancelling, setCancelling] = useState(false)
   const [returning, setReturning] = useState(false)
+  const [showNewRefund, setShowNewRefund] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [shareNote, setShareNote] = useState('')
   const [newReceipt, setNewReceipt] = useState(null)
@@ -241,7 +248,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
     setFailed(false)
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), canceller:profiles!orders_cancelled_by_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount)), refunds(id, amount, method, note, created_at), order_returns(id, item_id, owed_removed, returned, restocked, reason, created_at, profiles(full_name))')
+      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customer_name, customer_phone, customer_location, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), canceller:profiles!orders_cancelled_by_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, product_name, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount)), refunds(id, refund_number, amount, method, note, created_at), order_returns(id, item_id, owed_removed, returned, restocked, reason, created_at, profiles(full_name))')
       .eq('id', orderId)
       .maybeSingle()
     if (error) {
@@ -286,7 +293,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
   for (const r of order.refunds) refunded += Number(r.amount)
   paid -= refunded
   const itemName = {}
-  for (const item of order.order_items) itemName[item.id] = item.products.name
+  for (const item of order.order_items) itemName[item.id] = itemLabel(item)
   const balance = cancelled ? 0 : Math.max(0, total - paid)
   const overdue = !cancelled && balance > 0.005 && order.due_date && order.due_date < today()
 
@@ -302,13 +309,16 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
       invoiceNumber: invoiceNumber(order.order_number),
       date: order.created_at,
       dueDate: order.due_date,
-      customer: order.customers,
+      // The customer details as they were when the invoice was issued
+      customer: order.customer_name
+        ? { name: order.customer_name, phone: order.customer_phone, location: order.customer_location }
+        : order.customers,
       salesperson: order.salesperson?.full_name || '',
       paid,
       previousBalance: earlierOwed,
       notes: [order.notes, returnsSummary()].filter(Boolean).join('  '),
       items: order.order_items.filter((item) => item.qty > 0).map((item) => ({
-        name: item.products.name,
+        name: itemLabel(item),
         qty: item.qty,
         price: item.price,
         pending_qty: item.pending_qty,
@@ -375,7 +385,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
             return (
               <tr key={item.id} className={'border-t border-slate-100 ' + (pending ? 'bg-red-50 text-red-700' : item.qty === 0 ? 'text-slate-400' : '')}>
                 <td className="py-3 font-medium">
-                  {item.products.name}
+                  {itemLabel(item)}
                   {item.qty === 0 && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs">all returned</span>}
                 </td>
                 <td className="py-3 text-center">{item.qty}</td>
@@ -430,8 +440,14 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
               </div>
             ))}
             {order.refunds.map((r) => (
-              <div key={r.id} className="flex justify-between py-2">
-                <span className="text-slate-600">{new Date(r.created_at).toLocaleDateString()} · Refund · {methodLabel(r.method)}</span>
+              <div key={r.id} className="flex justify-between gap-3 py-2">
+                <span className="text-slate-600">
+                  {new Date(r.created_at).toLocaleDateString()} · Refund · {methodLabel(r.method)}
+                  <span className="block text-xs">
+                    <span className="text-slate-400">{refundNumber(r.refund_number)}</span>{' '}
+                    <RefundActions refundId={r.id} label="" className="ml-1" />
+                  </span>
+                </span>
                 <span className="font-semibold text-red-600">- {money(r.amount)}</span>
               </div>
             ))}
@@ -463,6 +479,13 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {showNewRefund && order.refunds.length > 0 && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-800">
+          <span className="font-medium">Return saved and refund recorded. Give the customer the refund note.</span>
+          <RefundActions refundId={[...order.refunds].sort((a, b) => b.refund_number - a.refund_number)[0].id} />
         </div>
       )}
 
@@ -501,7 +524,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
       {shareNote && <p className="mt-3 text-sm text-slate-500">{shareNote}</p>}
 
       {delivering && (
-        <DeliverDialog item={delivering} productName={delivering.products.name} customerName={order.customers?.name}
+        <DeliverDialog item={delivering} productName={itemLabel(delivering)} customerName={order.customers?.name}
           onClose={() => setDelivering(null)} onDone={() => { setDelivering(null); changed() }} />
       )}
 
@@ -516,7 +539,7 @@ function OrderDetail({ orderId, version, onClose, onChanged }) {
 
       {returning && (
         <ReturnDialog order={order} paid={paid} isAdmin={isAdmin}
-          onClose={() => setReturning(false)} onDone={() => { setReturning(false); changed() }} />
+          onClose={() => setReturning(false)} onDone={(refunded) => { setReturning(false); setShowNewRefund(refunded > 0); changed() }} />
       )}
 
       {cancelling && (
@@ -545,6 +568,8 @@ export default function Orders() {
   const [search, setSearch] = useState('')
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState('all')
+  const [range, setRange] = useState({ preset: 'all' })
+  const [count, setCount] = useState(null)
   const [version, setVersion] = useState(0)
   const selectedId = params.get('order')
 
@@ -557,22 +582,24 @@ export default function Orders() {
   useEffect(() => {
     let active = true
     setLoading(true)
-    let q = supabase.from('order_list').select('*').order('created_at', { ascending: false }).range(0, limit)
+    let q = supabase.from('order_list').select('*', { count: 'exact' }).order('created_at', { ascending: false }).range(0, limit)
+    q = applyRange(q, range)
     if (query) q = q.or('invoice_number.ilike.%' + query + '%,customer_name.ilike.%' + query + '%,salesperson.ilike.%' + query + '%')
     if (filter === 'unpaid') q = q.is('cancelled_at', null).gt('balance', 0.005)
     if (filter === 'overdue') q = q.eq('overdue', true)
     if (filter === 'pending') q = q.eq('has_pending', true)
     if (filter === 'cancelled') q = q.not('cancelled_at', 'is', null)
-    q.then(({ data, error }) => {
+    q.then(({ data, error, count }) => {
       if (!active) return
       setLoadFailed(!!error)
       const list = data || []
       setHasMore(list.length > limit)
+      setCount(error ? null : count)
       setRows(list.slice(0, limit))
       setLoading(false)
     })
     return () => { active = false }
-  }, [query, filter, limit, version])
+  }, [query, filter, limit, version, range])
 
   useEffect(() => {
     const refresh = () => setVersion((v) => v + 1)
@@ -598,8 +625,11 @@ export default function Orders() {
       </div>
 
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
-        <input className="input md:max-w-sm" placeholder="Search by invoice, customer or salesperson" value={search}
-          onChange={(e) => setSearch(e.target.value)} />
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <input className="input md:max-w-xs" placeholder="Search by invoice, customer or salesperson" value={search}
+            onChange={(e) => setSearch(e.target.value)} />
+          <DateRange value={range} onChange={(r) => { setRange(r); setLimit(PAGE) }} />
+        </div>
         <div className="flex gap-2 overflow-x-auto pb-1">
           {filters.map(([key, label]) => (
             <button key={key} onClick={() => { setFilter(key); setLimit(PAGE) }}
@@ -657,6 +687,10 @@ export default function Orders() {
           </tbody>
         </table>
       </div>
+
+      {count !== null && !loadFailed && (
+        <p className="-mt-3 text-sm text-slate-500">{count} order{count === 1 ? '' : 's'}{rows.length < count ? ', showing ' + rows.length : ''}</p>
+      )}
 
       {loadFailed && <LoadError onRetry={() => setVersion((v) => v + 1)} />}
 
