@@ -13,11 +13,11 @@ export default function Pending() {
           {rejected ? '✕' : '⏳'}
         </div>
         <h1 className="mt-6 text-xl font-bold">
-          {rejected ? 'Request declined' : 'Waiting for approval'}
+          {rejected ? 'No access' : 'Waiting for approval'}
         </h1>
         <p className="mt-2 text-sm text-slate-500">
           {rejected
-            ? 'An admin declined this account. Please contact your administrator.'
+            ? 'This account does not have access. Please contact your administrator.'
             : 'An admin needs to approve your account before you can get in. Check back shortly.'}
         </p>
 

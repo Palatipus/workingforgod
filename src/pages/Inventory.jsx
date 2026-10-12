@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import { stockStatus } from '../format'
+import { shrinkImage } from '../image'
 
 const filters = [
   ['all', 'All'],
@@ -27,16 +28,24 @@ function ProductForm({ product, onClose, onSaved }) {
   const [error, setError] = useState('')
   const [confirmRemove, setConfirmRemove] = useState(false)
 
-  const preview = file ? URL.createObjectURL(file) : product?.image_url
+  const [preview, setPreview] = useState(product?.image_url || null)
+
+  useEffect(() => {
+    if (!file) return
+    const url = URL.createObjectURL(file)
+    setPreview(url)
+    return () => URL.revokeObjectURL(url)
+  }, [file])
 
   function update(field, value) {
     setForm({ ...form, [field]: value })
   }
 
   async function uploadImage() {
-    const ext = file.name.split('.').pop()
+    const small = await shrinkImage(file)
+    const ext = small.name.split('.').pop()
     const path = crypto.randomUUID() + '.' + ext
-    const { error } = await supabase.storage.from('product-images').upload(path, file)
+    const { error } = await supabase.storage.from('product-images').upload(path, small, { contentType: small.type })
     if (error) throw error
     return supabase.storage.from('product-images').getPublicUrl(path).data.publicUrl
   }

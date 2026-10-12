@@ -21,3 +21,24 @@ export function methodLabel(key) {
   const found = paymentMethods.find(([k]) => k === key)
   return found ? found[1] : key
 }
+
+// Cleans text for use inside a database search filter (commas, brackets and wildcards would break it)
+export function searchTerm(text) {
+  return text.trim().replace(/[,()%*\\:"]/g, ' ').replace(/\s+/g, ' ')
+}
+
+export function today() {
+  const d = new Date()
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+}
+
+// Same rule as valid_username() in the database: 3-30 characters, letters, numbers, dots, dashes, underscores
+export function cleanUsername(text) {
+  return text.trim().toLowerCase()
+}
+
+export function validUsername(name) {
+  return /^[a-z0-9][a-z0-9._-]{1,28}[a-z0-9]$/.test(name)
+}
+
+export const usernameRule = 'Username must be 3-30 characters: letters, numbers, dots, dashes or underscores.'

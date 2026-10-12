@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from '../components/Modal'
 import { money, paymentMethods } from '../format'
+import { downloadStatement, shareStatement, shareNotice, loadPdf, invoiceNumber } from '../invoice'
 
 function CustomerPayment({ customer, onClose, onSaved }) {
   const owed = Number(customer.owed)
@@ -59,11 +60,99 @@ function CustomerPayment({ customer, onClose, onSaved }) {
   )
 }
 
+function EditCustomer({ customer, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name: customer.name || '',
+    phone: customer.phone || '',
+    email: customer.email || '',
+    location: customer.location || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function save(e) {
+    e.preventDefault()
+    setSaving(true)
+    const { error } = await supabase.from('customers').update({
+      name: form.name.trim(),
+      phone: form.phone.trim() || null,
+      email: form.email.trim() || null,
+      location: form.location.trim() || null,
+    }).eq('id', customer.customer_id)
+    if (error) {
+      setError(error.message)
+      setSaving(false)
+      return
+    }
+    onSaved()
+  }
+
+  return (
+    <Modal title="Edit customer" onClose={onClose}>
+      <form onSubmit={save} className="space-y-4">
+        <input className="input" placeholder="Customer or lab name" value={form.name}
+          onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+        <input className="input" placeholder="Phone" value={form.phone}
+          onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+        <input className="input" type="email" placeholder="Email" value={form.email}
+          onChange={(e) => setForm({ ...form, email: e.target.value })} />
+        <input className="input" placeholder="Location" value={form.location}
+          onChange={(e) => setForm({ ...form, location: e.target.value })} />
+        <p className="text-xs text-slate-400">Changes show on new invoices and on old invoices when they are downloaded again.</p>
+        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+        <div className="flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
+          <button disabled={saving} className="btn">{saving ? 'Saving...' : 'Save'}</button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+async function statementData(row) {
+  const [orders, payments] = await Promise.all([
+    supabase.from('order_list').select('id, invoice_number, created_at, due_date, total, paid, balance, overdue')
+      .eq('customer_id', row.customer_id).is('cancelled_at', null).order('created_at'),
+    supabase.from('payments').select('amount, method, paid_at, orders!inner(order_number, customer_id)')
+      .eq('orders.customer_id', row.customer_id).order('paid_at'),
+  ])
+  return {
+    customer: { name: row.name, phone: row.phone, location: row.location },
+    date: new Date().toISOString(),
+    orders: orders.data || [],
+    payments: (payments.data || []).map((p) => ({
+      ...p,
+      invoice_number: invoiceNumber(p.orders.order_number),
+    })),
+  }
+}
+
+function StatementButtons({ row, onNote }) {
+  const [busy, setBusy] = useState(false)
+
+  async function run(share) {
+    setBusy(true)
+    const data = await statementData(row)
+    if (share) onNote(shareNotice(await shareStatement(data)))
+    else await downloadStatement(data)
+    setBusy(false)
+  }
+
+  return (
+    <>
+      <button disabled={busy} onClick={() => run(false)} className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">Statement</button>
+      <button disabled={busy} onClick={() => run(true)} className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">Share</button>
+    </>
+  )
+}
+
 export default function Customers() {
   const [rows, setRows] = useState([])
   const [search, setSearch] = useState('')
   const [onlyOwing, setOnlyOwing] = useState(false)
   const [paying, setPaying] = useState(null)
+  const [editing, setEditing] = useState(null)
+  const [shareNote, setShareNote] = useState('')
 
   async function load() {
     const { data } = await supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name')
@@ -72,10 +161,12 @@ export default function Customers() {
 
   useEffect(() => {
     load()
+    loadPdf()
     const channel = supabase
       .channel('customers-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, load)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, load)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, load)
       .subscribe()
     return () => { supabase.removeChannel(channel) }
   }, [])
@@ -88,7 +179,11 @@ export default function Customers() {
   })
 
   let totalOwed = 0
-  for (const r of rows) if (Number(r.owed) > 0) totalOwed += Number(r.owed)
+  let totalOverdue = 0
+  for (const r of rows) {
+    if (Number(r.owed) > 0) totalOwed += Number(r.owed)
+    if (Number(r.overdue) > 0) totalOverdue += Number(r.overdue)
+  }
 
   return (
     <div className="space-y-6">
@@ -100,6 +195,7 @@ export default function Customers() {
         <div className="text-right">
           <div className="text-xs text-slate-500">Total owed to the business</div>
           <div className="text-xl font-bold text-red-600">{money(totalOwed)}</div>
+          {totalOverdue > 0.005 && <div className="text-xs font-semibold text-red-600">{money(totalOverdue)} overdue</div>}
         </div>
       </div>
 
@@ -111,6 +207,8 @@ export default function Customers() {
           Only customers who owe
         </label>
       </div>
+
+      {shareNote && <p className="text-sm text-slate-500">{shareNote}</p>}
 
       <div className="overflow-x-auto card">
         <table className="w-full whitespace-nowrap text-sm">
@@ -140,11 +238,18 @@ export default function Customers() {
                   <td className="px-5 py-3 text-right text-emerald-600">{money(r.paid)}</td>
                   <td className={'px-5 py-3 text-right font-semibold ' + (owes ? 'text-red-600' : 'text-slate-400')}>
                     {owes ? money(r.owed) : '-'}
-                  </td>
-                  <td className="px-5 py-3 text-right">
-                    {owes && (
-                      <button onClick={() => setPaying(r)} className="btn !px-3 !py-1 text-xs">Record payment</button>
+                    {Number(r.overdue) > 0.005 && (
+                      <div className="text-xs font-semibold text-red-600">{money(r.overdue)} overdue</div>
                     )}
+                  </td>
+                  <td className="px-5 py-3">
+                    <div className="flex items-center justify-end gap-3">
+                      <button onClick={() => setEditing(r)} className="text-xs font-medium text-slate-500 hover:underline">Edit</button>
+                      {Number(r.orders) > 0 && <StatementButtons row={r} onNote={setShareNote} />}
+                      {owes && (
+                        <button onClick={() => setPaying(r)} className="btn !px-3 !py-1 text-xs">Record payment</button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               )
@@ -155,6 +260,11 @@ export default function Customers() {
           </tbody>
         </table>
       </div>
+
+      {editing && (
+        <EditCustomer customer={editing} onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); load() }} />
+      )}
 
       {paying && (
         <CustomerPayment customer={paying} onClose={() => setPaying(null)}

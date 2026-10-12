@@ -2,13 +2,8 @@ import { useState } from 'react'
 import { supabase } from '../supabase'
 import PasswordInput from '../components/PasswordInput'
 import Icon from '../components/Icon'
+import { cleanUsername, validUsername, usernameRule } from '../format'
 
-async function findEmail(usernameOrEmail) {
-  const value = usernameOrEmail.trim()
-  if (value.includes('@')) return value.toLowerCase()
-  const { data } = await supabase.rpc('email_for_username', { p_username: value })
-  return data
-}
 
 export default function Login() {
   const [mode, setMode] = useState('login')
@@ -27,7 +22,19 @@ export default function Login() {
   }
 
   async function handleLogin() {
-    const loginEmail = await findEmail(username)
+    let loginEmail = username.trim().toLowerCase()
+    if (!loginEmail.includes('@')) {
+      let { data, error } = await supabase.rpc('email_for_login', { p_username: loginEmail, p_password: password })
+      // Older database without email_for_login (schema_update_6.sql not run yet)
+      if (error && error.code === 'PGRST202') {
+        ({ data, error } = await supabase.rpc('email_for_username', { p_username: loginEmail }))
+      }
+      if (error) {
+        setError(error.message.includes('Too many') ? error.message : 'Could not log in. Please try again.')
+        return
+      }
+      loginEmail = data
+    }
     if (!loginEmail) {
       setError('Wrong username or password.')
       return
@@ -37,9 +44,9 @@ export default function Login() {
   }
 
   async function handleSignup() {
-    const cleanName = username.trim().toLowerCase()
-    if (!/^[a-z0-9_]{3,20}$/.test(cleanName)) {
-      setError('Username must be 3-20 characters: letters, numbers or underscore.')
+    const cleanName = cleanUsername(username)
+    if (!validUsername(cleanName)) {
+      setError(usernameRule)
       return
     }
 
@@ -61,11 +68,8 @@ export default function Login() {
   }
 
   async function handleForgot() {
-    const resetEmail = await findEmail(username)
-    if (resetEmail) {
-      await supabase.auth.resetPasswordForEmail(resetEmail, { redirectTo: window.location.origin })
-    }
-    setNotice('If that account exists, a password reset link is on its way to its email.')
+    await supabase.auth.resetPasswordForEmail(email.trim().toLowerCase(), { redirectTo: window.location.origin })
+    setNotice('If an account uses that email, a password reset link is on its way.')
   }
 
   async function handleSubmit(e) {
@@ -84,7 +88,7 @@ export default function Login() {
   const titles = {
     login: ['Log in', 'Welcome back. Sign in to manage stock and orders.'],
     signup: ['Request access', 'An admin will review your request.'],
-    forgot: ['Reset password', 'Enter your username or email and we will send a reset link.'],
+    forgot: ['Reset password', 'Enter the email you signed up with and we will send a reset link.'],
   }
 
   const features = [
@@ -116,13 +120,16 @@ export default function Login() {
                   onChange={(e) => setFullName(e.target.value)} autoComplete="name" required />
               )}
 
-              <input className={inputClass}
-                placeholder={mode === 'signup' ? 'Choose a username' : 'Username or email'}
-                value={username} onChange={(e) => setUsername(e.target.value)}
-                autoCapitalize="none" autoCorrect="off" spellCheck="false" autoComplete="username" required />
+              {mode !== 'forgot' && (
+                <input className={inputClass}
+                  placeholder={mode === 'signup' ? 'Choose a username' : 'Username or email'}
+                  value={username} onChange={(e) => setUsername(e.target.value)}
+                  autoCapitalize="none" autoCorrect="off" spellCheck="false" autoComplete="username" required />
+              )}
 
-              {mode === 'signup' && (
-                <input className={inputClass} type="email" placeholder="Email (used to reset your password)" value={email}
+              {mode !== 'login' && (
+                <input className={inputClass} type="email"
+                  placeholder={mode === 'signup' ? 'Email (used to reset your password)' : 'Email'} value={email}
                   onChange={(e) => setEmail(e.target.value)} autoComplete="email" required />
               )}
 

@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import Icon from '../components/Icon'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import { money as formatMoney } from '../format'
-import { invoiceNumber } from '../invoice'
 
 const money = (n) => formatMoney(n, 0)
 
@@ -62,12 +61,14 @@ function StatCard({ label, value, change, alert, icon, tone, note }) {
 }
 
 function RecentOrders() {
+  const navigate = useNavigate()
   const [orders, setOrders] = useState([])
 
   useEffect(() => {
     supabase
-      .from('orders')
-      .select('id, order_number, created_at, customers(name), profiles(full_name), order_items(qty, price, pending_qty)')
+      .from('order_list')
+      .select('id, invoice_number, created_at, customer_name, salesperson, total, has_pending, overdue')
+      .is('cancelled_at', null)
       .order('created_at', { ascending: false })
       .limit(8)
       .then(({ data }) => setOrders(data || []))
@@ -88,26 +89,24 @@ function RecentOrders() {
         </thead>
         <tbody>
           {orders.map((order) => {
-            let total = 0
-            let hasPending = false
-            for (const item of order.order_items) {
-              total += item.qty * item.price
-              if (item.pending_qty > 0) hasPending = true
-            }
             return (
-              <tr key={order.id} className="border-t border-slate-100">
+              <tr key={order.id} onClick={() => navigate('/orders?order=' + order.id)}
+                className="cursor-pointer border-t border-slate-100 hover:bg-slate-50">
                 <td className="px-5 py-3 font-medium">
-                  {invoiceNumber(order.order_number)}
-                  {hasPending && (
+                  {order.invoice_number}
+                  {order.overdue && (
+                    <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">overdue</span>
+                  )}
+                  {order.has_pending && (
                     <span className="ml-2 rounded-full bg-red-50 px-2 py-0.5 text-xs font-medium text-red-600">
                       pending
                     </span>
                   )}
                 </td>
-                <td className="px-5 py-3">{order.customers?.name}</td>
-                <td className="px-5 py-3 text-slate-500">{order.profiles?.full_name}</td>
+                <td className="px-5 py-3">{order.customer_name}</td>
+                <td className="px-5 py-3 text-slate-500">{order.salesperson}</td>
                 <td className="px-5 py-3 text-slate-500">{new Date(order.created_at).toLocaleDateString()}</td>
-                <td className="px-5 py-3 text-right font-semibold">{money(total)}</td>
+                <td className="px-5 py-3 text-right font-semibold">{money(order.total)}</td>
               </tr>
             )
           })}
@@ -140,7 +139,10 @@ function PendingSignups({ onChanged }) {
 
   return (
     <div className="card">
-      <div className="border-b border-slate-100 px-5 py-4 text-sm font-semibold text-slate-900">Pending signups</div>
+      <div className="flex items-center justify-between border-b border-slate-100 px-5 py-4">
+        <span className="text-sm font-semibold text-slate-900">Pending signups</span>
+        <Link to="/team" className="text-xs font-medium text-indigo-600 hover:underline">Manage team</Link>
+      </div>
       <div className="divide-y divide-slate-100">
         {people.map((person) => (
           <div key={person.id} className="flex items-center justify-between px-5 py-3">
@@ -246,7 +248,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_5.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_7.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -262,18 +264,22 @@ function AdminDashboard() {
         <p className="text-sm text-slate-500">Stock, orders and sales at a glance.</p>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5 lg:gap-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">
         <StatCard label="Revenue this month" icon="revenue" tone="blue" note="No sales last month"
           value={money(stats.revenue_this_month)}
           change={percentChange(stats.revenue_this_month, stats.revenue_last_month)} />
-        <StatCard label="Orders this month" icon="receipt" tone="emerald" note="Orders created"
+        <StatCard label="Cash collected this month" icon="check" tone="emerald" note="No payments last month"
+          value={money(stats.cash_this_month)}
+          change={percentChange(stats.cash_this_month, stats.cash_last_month)} />
+        <StatCard label="Orders this month" icon="receipt" tone="blue" note="Orders created"
           value={stats.orders_this_month} />
         <StatCard label="Pending deliveries" icon="truck" tone="red" note="Items still owed"
           value={stats.pending_deliveries} alert={stats.pending_deliveries > 0} />
         <StatCard label="Low / out of stock" icon="box" tone="amber" note="Products to restock"
           value={stats.low_stock_count + stats.out_of_stock_count} alert={stats.out_of_stock_count > 0} />
         <StatCard label="Owed by customers" icon="users" tone="red"
-          note={(stats.customers_owing || 0) + ' customer' + (stats.customers_owing === 1 ? '' : 's') + ' owing'}
+          note={(stats.customers_owing || 0) + ' customer' + (stats.customers_owing === 1 ? '' : 's') + ' owing' +
+            (stats.overdue_amount > 0 ? ' · ' + money(stats.overdue_amount) + ' overdue' : '')}
           value={money(stats.outstanding_debt)} alert={stats.outstanding_debt > 0} />
       </div>
 

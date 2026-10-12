@@ -3,8 +3,8 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
-import { money, stockStatus, paymentMethods } from '../format'
-import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, invoiceTotals } from '../invoice'
+import { money, stockStatus, paymentMethods, today } from '../format'
+import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, invoiceTotals, loadPdf } from '../invoice'
 
 function StepBar({ step }) {
   const names = ['Customer', 'Items', 'Review']
@@ -29,20 +29,37 @@ function validQty(value) {
   return Number.isInteger(qty) && qty >= 1
 }
 
+function digits(phone) {
+  return String(phone || '').replace(/\D/g, '').slice(-9)
+}
+
 function CustomerStep({ customers, owedBy, onPick }) {
   const [mode, setMode] = useState('existing')
-  const [selectedId, setSelectedId] = useState('')
+  const [search, setSearch] = useState('')
   const [form, setForm] = useState({ name: '', phone: '', location: '' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [dupeOk, setDupeOk] = useState(false)
+
+  const term = search.trim().toLowerCase()
+  const matches = customers.filter((c) =>
+    (c.name + ' ' + (c.location || '') + ' ' + (c.phone || '')).toLowerCase().includes(term)).slice(0, 30)
+
+  // Customers that look like the one being added
+  const newName = form.name.trim().toLowerCase()
+  const newPhone = digits(form.phone)
+  const dupes = customers.filter((c) =>
+    (newName.length >= 3 && c.name.trim().toLowerCase() === newName) ||
+    (newPhone.length >= 9 && digits(c.phone) === newPhone))
 
   async function continueWithNew(e) {
     e.preventDefault()
+    if (dupes.length > 0 && !dupeOk) return
     setSaving(true)
     const { data, error } = await supabase.from('customers').insert({
-      name: form.name,
-      phone: form.phone || null,
-      location: form.location || null,
+      name: form.name.trim(),
+      phone: form.phone.trim() || null,
+      location: form.location.trim() || null,
     }).select().single()
     if (error) {
       setError(error.message)
@@ -51,8 +68,6 @@ function CustomerStep({ customers, owedBy, onPick }) {
     }
     onPick(data)
   }
-
-  const selectedOwes = owedBy[selectedId] || 0
 
   return (
     <div className="max-w-xl rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -67,35 +82,63 @@ function CustomerStep({ customers, owedBy, onPick }) {
       </div>
 
       {mode === 'existing' ? (
-        <div className="space-y-4">
-          <select className="input" value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
-            <option value="">Select a customer</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}{c.location ? ' (' + c.location + ')' : ''}{owedBy[c.id] > 0 ? ' · owes ' + money(owedBy[c.id]) : ''}
-              </option>
+        <div className="space-y-3">
+          <input className="input" placeholder="Search by name, phone or location" value={search} autoFocus
+            onChange={(e) => setSearch(e.target.value)} />
+          <div className="max-h-80 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200">
+            {matches.map((c) => (
+              <button key={c.id} onClick={() => onPick(c)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-slate-50">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-medium">{c.name}</div>
+                  <div className="truncate text-xs text-slate-400">{[c.phone, c.location].filter(Boolean).join(' · ')}</div>
+                </div>
+                {owedBy[c.id] > 0 && (
+                  <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                    owes {money(owedBy[c.id])}
+                  </span>
+                )}
+              </button>
             ))}
-          </select>
-          {selectedOwes > 0 && (
-            <div className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
-              This customer owes {money(selectedOwes)} from earlier orders. It will be shown on the new invoice.
-            </div>
-          )}
-          <button disabled={!selectedId} className="btn"
-            onClick={() => onPick(customers.find((c) => c.id === selectedId))}>
-            Continue
-          </button>
+            {matches.length === 0 && (
+              <div className="px-4 py-6 text-center text-sm text-slate-400">
+                No customer found. <button onClick={() => { setMode('new'); setForm({ ...form, name: search }) }}
+                  className="font-medium text-indigo-600 hover:underline">Add a new one</button>
+              </div>
+            )}
+          </div>
         </div>
       ) : (
         <form onSubmit={continueWithNew} className="space-y-4">
           <input className="input" placeholder="Customer or lab name" value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })} required />
+            onChange={(e) => { setForm({ ...form, name: e.target.value }); setDupeOk(false) }} required />
           <input className="input" placeholder="Phone" value={form.phone}
-            onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+            onChange={(e) => { setForm({ ...form, phone: e.target.value }); setDupeOk(false) }} />
           <input className="input" placeholder="Location" value={form.location}
             onChange={(e) => setForm({ ...form, location: e.target.value })} />
+
+          {dupes.length > 0 && (
+            <div className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
+              <div className="font-medium">This customer may already exist:</div>
+              <div className="mt-2 space-y-1">
+                {dupes.slice(0, 3).map((c) => (
+                  <button type="button" key={c.id} onClick={() => onPick(c)}
+                    className="block w-full rounded-md bg-white px-3 py-2 text-left hover:bg-amber-100">
+                    <span className="font-medium">{c.name}</span>
+                    <span className="text-amber-700"> {[c.phone, c.location].filter(Boolean).join(' · ')}</span>
+                    <span className="float-right text-xs font-semibold text-indigo-600">Use this</span>
+                  </button>
+                ))}
+              </div>
+              <label className="mt-3 flex items-center gap-2">
+                <input type="checkbox" checked={dupeOk} onChange={(e) => setDupeOk(e.target.checked)} />
+                No, this is a different customer
+              </label>
+            </div>
+          )}
+
           {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-          <button disabled={saving} className="btn">Save and continue</button>
+          <button disabled={saving || (dupes.length > 0 && !dupeOk)} className="btn">Save and continue</button>
         </form>
       )}
     </div>
@@ -189,6 +232,9 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                   <label className="text-xs text-slate-500">Price (GH₵)</label>
                   <input className="input" type="number" min="0.01" step="0.01" value={line.price}
                     onChange={(e) => onChange(line.product.id, { price: e.target.value })} />
+                  {line.priceHint && line.price === line.priceHint.value && (
+                    <div className="mt-0.5 text-[11px] text-slate-400">{line.priceHint.label}</div>
+                  )}
                 </div>
                 <div className="ml-auto text-right sm:w-32">
                   <div className="text-xs text-slate-500">Amount</div>
@@ -247,6 +293,7 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
   const [paid, setPaid] = useState('')
   const [method, setMethod] = useState('cash')
   const [dueDate, setDueDate] = useState('')
+  const [notes, setNotes] = useState('')
 
   const paidNum = Math.round(Number(paid || 0) * 100) / 100
   const paidOk = paidNum >= 0 && paidNum <= total + 0.001
@@ -301,7 +348,7 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
         </div>
         <div>
           <label className="text-xs text-slate-500">Due date for balance</label>
-          <input className="input" type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)}
+          <input className="input" type="date" min={today()} value={dueDate} onChange={(e) => setDueDate(e.target.value)}
             disabled={balance <= 0.005} />
         </div>
       </div>
@@ -317,13 +364,16 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
           <span className="font-bold">{money(balance + previousBalance)}</span></div>
       </div>
 
+      <textarea className="input mt-4" rows="2" placeholder="Note for this order (optional, printed on the invoice)"
+        value={notes} onChange={(e) => setNotes(e.target.value)} />
+
       {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid must be between 0 and the order total.</div>}
       {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
 
       <div className="mt-6 flex justify-end gap-3">
         <button onClick={onClose} className="btn-ghost">Go back</button>
         <button disabled={saving || !paidOk}
-          onClick={() => onSubmit({ paid: paidNum, method, dueDate: balance > 0.005 && dueDate ? dueDate : null })}
+          onClick={() => onSubmit({ paid: paidNum, method, dueDate: balance > 0.005 && dueDate ? dueDate : null, notes: notes.trim() || null })}
           className="btn">
           {saving ? 'Creating...' : 'Confirm and create invoice'}
         </button>
@@ -344,6 +394,7 @@ export default function NewOrder() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(null)
+  const [lastPrices, setLastPrices] = useState({})
   const [shareNote, setShareNote] = useState('')
 
   async function loadData() {
@@ -359,12 +410,27 @@ export default function NewOrder() {
     setOwedBy(owed)
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => { loadData(); loadPdf() }, [])
+
+  // Last price used for each product, preferring this customer's last price
+  useEffect(() => {
+    if (!customer) return
+    supabase.rpc('last_prices', { p_customer_id: customer.id }).then(({ data }) => {
+      const prices = {}
+      for (const row of data || []) prices[row.product_id] = row
+      setLastPrices(prices)
+    })
+  }, [customer])
 
   function toggleProduct(product) {
     const exists = lines.find((l) => l.product.id === product.id)
     if (exists) setLines(lines.filter((l) => l.product.id !== product.id))
-    else setLines([...lines, { product, qty: '1', price: '', ok: false }])
+    else {
+      const last = lastPrices[product.id]
+      const value = last ? String(Number(last.price)) : ''
+      const priceHint = last ? { value, label: last.for_customer ? "This customer's last price" : 'Last price used' } : null
+      setLines([...lines, { product, qty: '1', price: value, priceHint, ok: false }])
+    }
   }
 
   function updateLine(id, changes) {
@@ -377,7 +443,7 @@ export default function NewOrder() {
     if (rest.length === 0) setStep(2)
   }
 
-  async function submit({ paid, method, dueDate }) {
+  async function submit({ paid, method, dueDate, notes }) {
     setSaving(true)
     setError('')
 
@@ -388,6 +454,7 @@ export default function NewOrder() {
       p_amount_paid: paid,
       p_method: method,
       p_due_date: dueDate,
+      p_notes: notes,
     })
     if (error) {
       setError(error.message)
@@ -395,8 +462,10 @@ export default function NewOrder() {
       return
     }
 
+    // Build the invoice from what was actually saved (stock may have changed since this page loaded)
     const { data: order } = await supabase.from('orders')
-      .select('order_number, created_at, previous_balance, due_date').eq('id', orderId).single()
+      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, products(name))')
+      .eq('id', orderId).single()
     const invoice = {
       invoiceNumber: invoiceNumber(order.order_number),
       date: order.created_at,
@@ -405,11 +474,12 @@ export default function NewOrder() {
       salesperson: profile.full_name,
       paid,
       previousBalance: Number(order.previous_balance),
-      items: lines.map((l) => ({
-        name: l.product.name,
-        qty: Number(l.qty),
-        price: Number(l.price),
-        pending_qty: Math.max(0, Number(l.qty) - l.product.stock_qty),
+      notes: order.notes,
+      items: order.order_items.map((item) => ({
+        name: item.products.name,
+        qty: item.qty,
+        price: Number(item.price),
+        pending_qty: item.pending_qty,
       })),
     }
     downloadInvoice(invoice)

@@ -1,4 +1,25 @@
+import { useEffect, useRef } from 'react'
+
+// Open dialogs, newest last, so Esc only closes the one on top.
+const stack = []
+
 export default function Modal({ title, onClose, children, wide }) {
+  const closeRef = useRef(onClose)
+  closeRef.current = onClose
+
+  useEffect(() => {
+    const entry = {}
+    stack.push(entry)
+    function onKey(e) {
+      if (e.key === 'Escape' && stack[stack.length - 1] === entry) closeRef.current()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      stack.splice(stack.indexOf(entry), 1)
+    }
+  }, [])
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4" onClick={onClose}>
       <div
@@ -7,7 +28,7 @@ export default function Modal({ title, onClose, children, wide }) {
       >
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-bold">{title}</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+          <button onClick={onClose} aria-label="Close" className="text-slate-400 hover:text-slate-600">✕</button>
         </div>
         <div className="mt-4">{children}</div>
       </div>

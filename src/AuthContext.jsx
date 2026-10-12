@@ -73,6 +73,18 @@ export function AuthProvider({ children }) {
     }
   }, [])
 
+  // Pick up access or role changes made by an admin while this user is signed in
+  const userId = session?.user?.id
+  useEffect(() => {
+    if (!userId) return
+    const channel = supabase
+      .channel('my-profile-' + userId)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'profiles', filter: 'id=eq.' + userId },
+        (payload) => setProfile(payload.new))
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [userId])
+
   async function refreshProfile() {
     if (session) await loadProfile(session.user.id)
   }

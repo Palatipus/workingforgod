@@ -1,7 +1,9 @@
-import { NavLink, Outlet } from 'react-router-dom'
+import { useState } from 'react'
+import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../AuthContext'
 import NotificationBell from './NotificationBell'
 import Icon from './Icon'
+import UsernameDialog from './UsernameDialog'
 
 const links = [
   { to: '/', label: 'Dashboard', icon: 'home' },
@@ -12,7 +14,11 @@ const links = [
 ]
 
 export default function Layout() {
-  const { profile, signOut } = useAuth()
+  const { profile, signOut, refreshProfile } = useAuth()
+  // Ask people without a username to pick one (accounts made before usernames existed)
+  const [usernameOpen, setUsernameOpen] = useState(!profile.username)
+  const isAdmin = profile.role === 'admin'
+  const sideLinks = isAdmin ? [...links, { to: '/team', label: 'Team', icon: 'team' }] : links
 
   return (
     <div className="flex min-h-screen">
@@ -26,7 +32,7 @@ export default function Layout() {
         </div>
 
         <nav className="mt-8 flex flex-1 flex-col gap-1">
-          {links.map((link) => (
+          {sideLinks.map((link) => (
             <NavLink
               key={link.to}
               to={link.to}
@@ -44,7 +50,9 @@ export default function Layout() {
 
         <div className="rounded-xl border border-slate-200 p-3">
           <div className="truncate text-sm font-semibold">{profile.full_name}</div>
-          <div className="text-xs capitalize text-slate-400">{profile.role}</div>
+          <button onClick={() => setUsernameOpen(true)} className="block text-xs text-slate-400 hover:text-indigo-600">
+            {profile.username ? '@' + profile.username : 'Set a username'} · <span className="capitalize">{profile.role}</span>
+          </button>
           <button onClick={signOut} className="mt-2 text-xs font-medium text-red-500 hover:underline">
             Sign out
           </button>
@@ -53,11 +61,19 @@ export default function Layout() {
 
       <main className="min-w-0 flex-1 p-4 pb-24 md:p-8 md:pb-8">
         <div className="mb-4 flex items-center justify-between md:mb-6 md:justify-end">
-          <div className="flex items-center gap-2 md:hidden">
+          <button onClick={() => setUsernameOpen(true)} className="flex items-center gap-2 text-left md:hidden">
             <img src="/logo.png" alt="" className="h-9 w-9" />
-            <span className="text-sm font-bold text-indigo-800">Working For God</span>
-          </div>
+            <span>
+              <span className="block text-sm font-bold leading-tight text-indigo-800">Working For God</span>
+              <span className="block text-xs text-slate-400">{profile.username ? '@' + profile.username : 'Set a username'}</span>
+            </span>
+          </button>
           <div className="flex items-center gap-2">
+            {isAdmin && (
+              <Link to="/team" className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 md:hidden">
+                Team
+              </Link>
+            )}
             <NotificationBell />
             <button onClick={signOut}
               className="rounded-full border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-600 md:hidden">
@@ -67,6 +83,14 @@ export default function Layout() {
         </div>
         <Outlet />
       </main>
+
+      {usernameOpen && (
+        <UsernameDialog current={profile.username}
+          title={profile.username ? 'Change your username' : 'Choose a username'}
+          intro={profile.username ? 'You log in with this.' : 'Pick a username so you can log in with it instead of your email.'}
+          onClose={() => setUsernameOpen(false)}
+          onSaved={async () => { await refreshProfile(); setUsernameOpen(false) }} />
+      )}
 
       <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-slate-200 bg-white md:hidden">
         {links.map((link) => (

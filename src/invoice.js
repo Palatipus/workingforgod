@@ -1,7 +1,14 @@
-import jsPDF from 'jspdf'
-import autoTable from 'jspdf-autotable'
-import { logoData } from './logoData'
 import { company } from './company'
+
+// The PDF libraries are big, so they load only when a PDF is first needed.
+let libPromise
+export function loadPdf() {
+  if (!libPromise) {
+    libPromise = Promise.all([import('jspdf'), import('jspdf-autotable'), import('./logoData')])
+      .then(([pdf, table, logo]) => ({ jsPDF: pdf.default, autoTable: table.default, logoData: logo.logoData }))
+  }
+  return libPromise
+}
 
 const NAVY = [11, 42, 74]
 const BLUE = [31, 116, 176]
@@ -59,13 +66,10 @@ export function invoiceMessage(data) {
   return lines.join('\n')
 }
 
-export function buildInvoice(data) {
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-  const W = 210
-  const M = 14
-  const t = invoiceTotals(data)
-  const statusColor = t.status === 'PAID' ? OK : t.status === 'PART PAID' ? [217, 119, 6] : RED
+const W = 210
+const M = 14
 
+function drawHeader(doc, logoData, title, rightLines) {
   doc.setFillColor(...NAVY)
   doc.rect(0, 0, W, 42, 'F')
   doc.setFillColor(...GREEN)
@@ -88,13 +92,73 @@ export function buildInvoice(data) {
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(26)
   doc.setTextColor(255, 255, 255)
-  doc.text('INVOICE', W - M, 19, { align: 'right' })
+  doc.text(title, W - M, 19, { align: 'right' })
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(9)
   doc.setTextColor(200, 222, 242)
-  doc.text('No. ' + data.invoiceNumber, W - M, 26, { align: 'right' })
-  doc.text('Date: ' + shortDate(data.date), W - M, 31, { align: 'right' })
-  doc.text('Due: ' + (data.dueDate ? shortDate(data.dueDate) : 'On receipt'), W - M, 36, { align: 'right' })
+  rightLines.forEach((line, i) => doc.text(line, W - M, 26 + i * 5, { align: 'right' }))
+}
+
+function drawFooter(doc) {
+  const pages = doc.internal.getNumberOfPages()
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i)
+    doc.setDrawColor(...LINE)
+    doc.line(M, 285, W - M, 285)
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(7.5)
+    doc.setTextColor(...MUTED)
+    doc.text('Thank you for your business.   ' + company.name + '   |   ' + company.phone, M, 290)
+    doc.text('Page ' + i + ' of ' + pages, W - M, 290, { align: 'right' })
+  }
+}
+
+// Bank details box, 92mm wide and 40mm tall, at (M, y)
+function drawBankBox(doc, y) {
+  doc.setFillColor(...SOFT)
+  doc.setDrawColor(...LINE)
+  doc.roundedRect(M, y, 92, 40, 3, 3, 'FD')
+  doc.setFillColor(...GREEN)
+  doc.roundedRect(M, y, 1.6, 40, 0.8, 0.8, 'F')
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...BLUE)
+  doc.text('PAYMENT DETAILS', M + 6, y + 7)
+  doc.setFontSize(10)
+  doc.setTextColor(...TEXT)
+  doc.text(company.bank.name, M + 6, y + 14)
+  const bankRows = [
+    ['Account no.', company.bank.account],
+    ['Merchant no.', company.bank.merchantNo],
+    ['Account name', company.bank.accountName],
+  ]
+  let by = y + 20.5
+  for (const [label, value] of bankRows) {
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...MUTED)
+    doc.text(label, M + 6, by)
+    doc.setFont('helvetica', 'bold')
+    doc.setTextColor(...TEXT)
+    doc.text(value, M + 33, by)
+    by += 5
+  }
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...MUTED)
+  doc.text('Send proof of payment to WhatsApp ' + company.whatsapp, M + 6, y + 36.5)
+}
+
+export function buildInvoice(data, { jsPDF, autoTable, logoData }) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const t = invoiceTotals(data)
+  const statusColor = t.status === 'PAID' ? OK : t.status === 'PART PAID' ? [217, 119, 6] : RED
+
+  drawHeader(doc, logoData, 'INVOICE', [
+    'No. ' + data.invoiceNumber,
+    'Date: ' + shortDate(data.date),
+    'Due: ' + (data.dueDate ? shortDate(data.dueDate) : 'On receipt'),
+  ])
 
   doc.setFontSize(8.5)
   doc.setTextColor(...MUTED)
@@ -185,43 +249,20 @@ export function buildInvoice(data) {
   })
 
   let y = doc.lastAutoTable.finalY + 8
+  if (data.notes) {
+    doc.setFont('helvetica', 'italic')
+    doc.setFontSize(8.5)
+    doc.setTextColor(...MUTED)
+    const noteLines = doc.splitTextToSize('Note: ' + data.notes, W - 2 * M).slice(0, 4)
+    doc.text(noteLines, M, y)
+    y += noteLines.length * 4 + 4
+  }
   if (y > 200) {
     doc.addPage()
     y = 20
   }
 
-  doc.setFillColor(...SOFT)
-  doc.setDrawColor(...LINE)
-  doc.roundedRect(M, y, 92, 40, 3, 3, 'FD')
-  doc.setFillColor(...GREEN)
-  doc.roundedRect(M, y, 1.6, 40, 0.8, 0.8, 'F')
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...BLUE)
-  doc.text('PAYMENT DETAILS', M + 6, y + 7)
-  doc.setFontSize(10)
-  doc.setTextColor(...TEXT)
-  doc.text(company.bank.name, M + 6, y + 14)
-  const bankRows = [
-    ['Account no.', company.bank.account],
-    ['Merchant no.', company.bank.merchantNo],
-    ['Account name', company.bank.accountName],
-  ]
-  let by = y + 20.5
-  for (const [label, value] of bankRows) {
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8.5)
-    doc.setTextColor(...MUTED)
-    doc.text(label, M + 6, by)
-    doc.setFont('helvetica', 'bold')
-    doc.setTextColor(...TEXT)
-    doc.text(value, M + 33, by)
-    by += 5
-  }
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(7.5)
-  doc.setTextColor(...MUTED)
-  doc.text('Send proof of payment to WhatsApp ' + company.whatsapp, M + 6, y + 36.5)
+  drawBankBox(doc, y)
 
   const tw = 84
   const tx = W - M - tw
@@ -287,41 +328,28 @@ export function buildInvoice(data) {
   doc.setTextColor(...MUTED)
   termLines.forEach((line, i) => doc.text(line, M + 6, y + 12.5 + i * 3.4))
 
-  const pages = doc.internal.getNumberOfPages()
-  for (let i = 1; i <= pages; i++) {
-    doc.setPage(i)
-    doc.setDrawColor(...LINE)
-    doc.line(M, 285, W - M, 285)
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(7.5)
-    doc.setTextColor(...MUTED)
-    doc.text('Thank you for your business.   ' + company.name + '   |   ' + company.phone, M, 290)
-    doc.text('Page ' + i + ' of ' + pages, W - M, 290, { align: 'right' })
-  }
+  drawFooter(doc)
 
   return doc
 }
 
-export function downloadInvoice(data) {
-  buildInvoice(data).save(data.invoiceNumber + '.pdf')
+export async function downloadInvoice(data) {
+  buildInvoice(data, await loadPdf()).save(data.invoiceNumber + '.pdf')
 }
 
-export function invoiceFile(data) {
-  const blob = buildInvoice(data).output('blob')
+export async function invoiceFile(data) {
+  const blob = buildInvoice(data, await loadPdf()).output('blob')
   return new File([blob], data.invoiceNumber + '.pdf', { type: 'application/pdf' })
 }
 
 // Opens the device's share sheet so the user can send the PDF to any app.
 // Where sharing isn't supported (e.g. some desktop browsers), it downloads the PDF and copies a summary instead.
-export async function shareInvoice(data) {
-  const file = invoiceFile(data)
-  const text = invoiceMessage(data)
-
+async function sharePdf(file, title, text, download) {
   if (navigator.share) {
     const withFile = navigator.canShare && navigator.canShare({ files: [file] })
-    if (!withFile) downloadInvoice(data)
+    if (!withFile) download()
     try {
-      await navigator.share(withFile ? { files: [file], title: data.invoiceNumber, text } : { title: data.invoiceNumber, text })
+      await navigator.share(withFile ? { files: [file], title, text } : { title, text })
       return withFile ? 'shared' : 'shared-text'
     } catch (err) {
       if (err.name === 'AbortError') return 'cancelled'
@@ -329,13 +357,161 @@ export async function shareInvoice(data) {
     if (!withFile) return 'downloaded'
   }
 
-  downloadInvoice(data)
+  download()
   try {
     await navigator.clipboard.writeText(text)
     return 'downloaded-copied'
   } catch {
     return 'downloaded'
   }
+}
+
+export async function shareInvoice(data) {
+  const file = await invoiceFile(data)
+  return sharePdf(file, data.invoiceNumber, invoiceMessage(data), () => downloadInvoice(data))
+}
+
+// STATEMENT ------------------------------------------------------------
+// data: { customer, date, orders: [{ invoice_number, created_at, due_date, total, paid, balance, overdue }],
+//         payments: [{ paid_at, invoice_number, method, amount }] }
+
+function statementTotals(data) {
+  let owed = 0
+  let overdue = 0
+  let bought = 0
+  let paid = 0
+  for (const o of data.orders) {
+    bought += Number(o.total)
+    paid += Number(o.paid)
+    owed += Math.max(0, Number(o.balance))
+    if (o.overdue) overdue += Number(o.balance)
+  }
+  return { owed, overdue, bought, paid }
+}
+
+function statementName(data) {
+  return 'Statement-' + data.customer.name.replace(/[^a-z0-9]+/gi, '-') + '-' + new Date(data.date).toISOString().slice(0, 10)
+}
+
+const methodNames = { cash: 'Cash', mobile_money: 'Mobile money', bank_transfer: 'Bank transfer', other: 'Other' }
+
+export function buildStatement(data, { jsPDF, autoTable, logoData }) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const t = statementTotals(data)
+
+  drawHeader(doc, logoData, 'STATEMENT', ['Date: ' + shortDate(data.date)])
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.setTextColor(...BLUE)
+  doc.text('CUSTOMER', M, 54)
+  doc.setFontSize(12)
+  doc.setTextColor(...TEXT)
+  doc.text(data.customer.name, M, 60)
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(9)
+  doc.setTextColor(...MUTED)
+  const contact = [data.customer.phone, data.customer.location].filter(Boolean).join('   |   ')
+  if (contact) doc.text(contact, M, 65.5)
+
+  const boxW = 58
+  const boxX = W - M - boxW
+  doc.setFillColor(...(t.owed > 0.005 ? NAVY : OK))
+  doc.roundedRect(boxX, 50, boxW, 18, 3, 3, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(7.5)
+  doc.text(t.owed > 0.005 ? 'TOTAL OWED' : 'NOTHING OWED', boxX + 5, 56)
+  doc.setFontSize(13)
+  doc.text(fmt(t.owed), boxX + 5, 63.5)
+  if (t.overdue > 0.005) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...RED)
+    doc.text('Overdue: ' + fmt(t.overdue), W - M, 73, { align: 'right' })
+  }
+
+  autoTable(doc, {
+    startY: 78,
+    head: [['Invoice', 'Date', 'Due', 'Amount', 'Paid', 'Balance']],
+    body: data.orders.map((o) => [
+      o.invoice_number,
+      shortDate(o.created_at),
+      o.due_date ? shortDate(o.due_date) : '-',
+      fmt(o.total),
+      fmt(o.paid),
+      Number(o.balance) > 0.005 ? fmt(o.balance) + (o.overdue ? '\nOVERDUE' : '') : 'Paid',
+    ]),
+    foot: [['Total', '', '', fmt(t.bought), fmt(t.paid), fmt(t.owed)]],
+    margin: { left: M, right: M },
+    theme: 'plain',
+    styles: { fontSize: 8.5, cellPadding: 2.8, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', lineWidth: 0 },
+    footStyles: { fillColor: SOFT, fontStyle: 'bold' },
+    columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' } },
+    didParseCell: (hook) => {
+      if (hook.section === 'body' && hook.column.index === 5 && String(hook.cell.raw).includes('OVERDUE')) {
+        hook.cell.styles.textColor = RED
+      }
+    },
+  })
+
+  let y = doc.lastAutoTable.finalY + 8
+
+  if (data.payments.length > 0) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(7.5)
+    doc.setTextColor(...BLUE)
+    doc.text('PAYMENTS RECEIVED', M, y)
+    autoTable(doc, {
+      startY: y + 2,
+      head: [['Date', 'Invoice', 'Method', 'Amount']],
+      body: data.payments.map((p) => [shortDate(p.paid_at), p.invoice_number, methodNames[p.method] || p.method, fmt(p.amount)]),
+      margin: { left: M, right: M },
+      theme: 'plain',
+      styles: { fontSize: 8.5, cellPadding: 2.4, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
+      headStyles: { fillColor: SOFT, textColor: MUTED, fontStyle: 'bold', lineWidth: 0 },
+      columnStyles: { 3: { halign: 'right' } },
+    })
+    y = doc.lastAutoTable.finalY + 8
+  }
+
+  if (t.owed > 0.005) {
+    if (y + 40 > 280) {
+      doc.addPage()
+      y = 20
+    }
+    drawBankBox(doc, y)
+  }
+
+  drawFooter(doc)
+  return doc
+}
+
+export function statementMessage(data) {
+  const t = statementTotals(data)
+  const lines = ['Statement from ' + company.name, 'Customer: ' + data.customer.name, 'Date: ' + shortDate(data.date), '']
+  for (const o of data.orders) {
+    if (Number(o.balance) > 0.005) {
+      lines.push(o.invoice_number + ' (' + shortDate(o.created_at) + '): ' + fmt(o.balance) + (o.overdue ? ' OVERDUE' : ''))
+    }
+  }
+  lines.push('', 'TOTAL OWED: ' + fmt(t.owed))
+  if (t.owed > 0.005) {
+    lines.push('Pay to ' + company.bank.name + ', account ' + company.bank.account + ', merchant no ' + company.bank.merchantNo +
+      ' (' + company.bank.accountName + ').', 'Send proof of payment to WhatsApp ' + company.whatsapp + '.')
+  }
+  return lines.join('\n')
+}
+
+export async function downloadStatement(data) {
+  buildStatement(data, await loadPdf()).save(statementName(data) + '.pdf')
+}
+
+export async function shareStatement(data) {
+  const blob = buildStatement(data, await loadPdf()).output('blob')
+  const file = new File([blob], statementName(data) + '.pdf', { type: 'application/pdf' })
+  return sharePdf(file, 'Statement', statementMessage(data), () => downloadStatement(data))
 }
 
 export function shareNotice(result) {
