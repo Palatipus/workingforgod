@@ -1,3 +1,7 @@
+import { supabase } from './supabase'
+
+// Built-in defaults. The real values come from the company_settings table (editable on the Settings page)
+// and are copied into this object, so invoices, receipts and statements always use the latest details.
 export const company = {
   name: "WORKING FOR GOD VENTURES",
   tagline: "Mindray specialists  |  Lab equipment, reagents and training",
@@ -22,3 +26,24 @@ export const company = {
     "When mobile money, bank transfer or any other payment is made, please send a screenshot or take a picture of the slip and send it to this WhatsApp number 0549576787.",
   ],
 };
+
+export function applyCompany(data) {
+  if (!data) return
+  Object.assign(company, data, { bank: { ...company.bank, ...(data.bank || {}) } })
+}
+
+let loading = null
+
+// Loads the saved details once per session (call again with force after saving)
+export function loadCompany(force = false) {
+  if (!loading || force) {
+    loading = supabase.from('company_settings').select('data').eq('id', 1).maybeSingle()
+      .then(({ data, error }) => {
+        if (error) loading = null
+        else applyCompany(data?.data)
+      })
+      .catch(() => { loading = null })
+  }
+  return loading || Promise.resolve()
+}
+

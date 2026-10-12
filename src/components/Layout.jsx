@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { loadCompany } from '../company'
 import { Link, NavLink, Outlet } from 'react-router-dom'
 import { useAuth } from '../AuthContext'
 import NotificationBell from './NotificationBell'
@@ -24,9 +25,13 @@ export default function Layout() {
   const [accountOpen, setAccountOpen] = useState(false)
   const { available: canInstall, install } = useInstallPrompt()
   const online = useOnline()
+
+  // Company details for invoices, receipts and statements
+  useEffect(() => { loadCompany() }, [])
   const isAdmin = profile.role === 'admin'
   const sideLinks = isAdmin
-    ? [...links, { to: '/reports', label: 'Reports', icon: 'chart' }, { to: '/team', label: 'Team', icon: 'team' }]
+    ? [...links, { to: '/reports', label: 'Reports', icon: 'chart' }, { to: '/team', label: 'Team', icon: 'team' },
+      { to: '/settings', label: 'Settings', icon: 'settings' }]
     : links
 
   return (

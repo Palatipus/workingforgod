@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../supabase'
+import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import UsernameDialog from '../components/UsernameDialog'
@@ -47,7 +47,8 @@ export default function Team() {
   const [loadFailed, setLoadFailed] = useState(false)
 
   async function load() {
-    const { data, error } = await supabase.from('profiles').select('id, full_name, username, role, status, created_at').order('full_name')
+    const { data, error } = await selectAll(() =>
+      supabase.from('profiles').select('id, full_name, username, role, status, created_at').order('full_name').order('id'))
     setLoadFailed(!!error)
     if (!error) setPeople(data || [])
   }

@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import Icon from '../components/Icon'
 import LoadError from '../components/LoadError'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts'
-import { supabase } from '../supabase'
+import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import { money as formatMoney } from '../format'
 
@@ -268,7 +268,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_10.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_11.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -284,7 +284,10 @@ function AdminDashboard() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Overview</h1>
           <p className="text-sm text-slate-500">Stock, orders and sales at a glance.</p>
         </div>
-        <Link to="/reports" className="btn-ghost">Reports and exports</Link>
+        <div className="flex gap-2">
+          <Link to="/reports" className="btn-ghost">Reports and exports</Link>
+          <Link to="/settings" className="btn-ghost">Settings</Link>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 lg:gap-4">
@@ -366,10 +369,10 @@ function MyCustomersOwing({ userId }) {
 
   function load() {
     setFailed(false)
-    supabase.from('order_list')
+    selectAll(() => supabase.from('order_list')
       .select('id, invoice_number, customer_id, customer_name, balance, due_date, overdue, created_at')
       .eq('salesperson_id', userId).is('cancelled_at', null).gt('balance', 0.005)
-      .order('created_at')
+      .order('created_at').order('id'))
       .then(({ data, error }) => {
         if (error) setFailed(true)
         else setRows(data || [])

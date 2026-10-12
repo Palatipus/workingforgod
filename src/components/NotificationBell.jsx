@@ -15,12 +15,18 @@ export default function NotificationBell() {
   const { profile } = useAuth()
   const navigate = useNavigate()
   const [items, setItems] = useState([])
+  const [unread, setUnread] = useState(0)
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
 
   async function load() {
-    const { data } = await supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(15)
-    setItems(data || [])
+    const [list, count] = await Promise.all([
+      supabase.from('notifications').select('*').order('created_at', { ascending: false }).limit(15),
+      // The real number of unread notifications, not just among the 15 shown
+      supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('is_read', false),
+    ])
+    if (!list.error) setItems(list.data || [])
+    if (!count.error) setUnread(count.count || 0)
   }
 
   useEffect(() => {
@@ -53,7 +59,6 @@ export default function NotificationBell() {
     }
   }, [open])
 
-  const unread = items.filter((n) => !n.is_read).length
 
   async function openNotification(n) {
     setOpen(false)
@@ -79,8 +84,8 @@ export default function NotificationBell() {
           <path d="M13.7 21a2 2 0 0 1-3.4 0" />
         </svg>
         {unread > 0 && (
-          <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">
-            {unread}
+          <span className="absolute -right-1 -top-1 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-indigo-600 px-1 text-xs font-bold text-white">
+            {unread > 99 ? '99+' : unread}
           </span>
         )}
       </button>

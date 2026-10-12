@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../supabase'
+import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
@@ -431,10 +431,10 @@ export default function NewOrder() {
   async function loadData() {
     setLoadFailed(false)
     const [c, p, b, o] = await Promise.all([
-      supabase.from('customers').select('*').order('name'),
-      supabase.from('products').select('*').eq('is_active', true).order('name'),
-      supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0),
-      supabase.from('product_owed').select('product_id, owed_qty'),
+      selectAll(() => supabase.from('customers').select('*').order('name').order('id')),
+      selectAll(() => supabase.from('products').select('*').eq('is_active', true).order('name').order('id')),
+      selectAll(() => supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0).order('customer_id')),
+      selectAll(() => supabase.from('product_owed').select('product_id, owed_qty').order('product_id')),
     ])
     if (c.error || p.error || b.error) {
       setLoadFailed(true)

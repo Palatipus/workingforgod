@@ -1,3 +1,5 @@
+import { selectAll } from './supabase'
+
 // CSV files that open cleanly in Excel and Google Sheets
 
 function cell(value) {
@@ -23,16 +25,11 @@ export function downloadCsv(name, csv) {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-// Supabase returns at most 1000 rows per request, so fetch in pages until everything is in
+// All rows of a query (past the 1000-row limit), throwing on error
 export async function fetchAll(makeQuery) {
-  const size = 1000
-  const all = []
-  for (let from = 0; ; from += size) {
-    const { data, error } = await makeQuery().range(from, from + size - 1)
-    if (error) throw error
-    all.push(...data)
-    if (data.length < size) return all
-  }
+  const { data, error } = await selectAll(makeQuery)
+  if (error) throw error
+  return data
 }
 
 export function dateTime(value) {

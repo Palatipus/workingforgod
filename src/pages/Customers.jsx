@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { supabase } from '../supabase'
+import { supabase, selectAll } from '../supabase'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
 import ReceiptActions from '../components/ReceiptActions'
@@ -170,7 +170,8 @@ export default function Customers() {
   const [newReceipt, setNewReceipt] = useState(null)
 
   async function load() {
-    const { data, error } = await supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name')
+    const { data, error } = await selectAll(() =>
+      supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name').order('customer_id'))
     if (error) {
       setLoadFailed(true)
       return

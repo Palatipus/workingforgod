@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { supabase } from '../supabase'
+import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
@@ -182,7 +182,6 @@ function ProductForm({ product, onClose, onSaved }) {
 }
 
 function StockForm({ product, onClose, onSaved }) {
-  const { profile } = useAuth()
   const [qty, setQty] = useState('')
   const [supplier, setSupplier] = useState('')
   const [saving, setSaving] = useState(false)
@@ -427,8 +426,8 @@ export default function Inventory() {
 
   async function load() {
     const [p, o] = await Promise.all([
-      supabase.from('products').select('*').order('name'),
-      supabase.from('product_owed').select('*'),
+      selectAll(() => supabase.from('products').select('*').order('name').order('id')),
+      selectAll(() => supabase.from('product_owed').select('*').order('product_id')),
     ])
     if (p.error) {
       setLoadFailed(true)

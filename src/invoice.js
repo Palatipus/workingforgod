@@ -1,10 +1,10 @@
-import { company } from './company'
+import { company, loadCompany } from './company'
 
 // The PDF libraries are big, so they load only when a PDF is first needed.
 let libPromise
 export function loadPdf() {
   if (!libPromise) {
-    libPromise = Promise.all([import('jspdf'), import('jspdf-autotable'), import('./logoData')])
+    libPromise = Promise.all([import('jspdf'), import('jspdf-autotable'), import('./logoData'), loadCompany()])
       .then(([pdf, table, logo]) => ({ jsPDF: pdf.default, autoTable: table.default, logoData: logo.logoData }))
   }
   return libPromise

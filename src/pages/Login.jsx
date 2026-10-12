@@ -24,11 +24,7 @@ export default function Login() {
   async function handleLogin() {
     let loginEmail = username.trim().toLowerCase()
     if (!loginEmail.includes('@')) {
-      let { data, error } = await supabase.rpc('email_for_login', { p_username: loginEmail, p_password: password })
-      // Older database without email_for_login (schema_update_6.sql not run yet)
-      if (error && error.code === 'PGRST202') {
-        ({ data, error } = await supabase.rpc('email_for_username', { p_username: loginEmail }))
-      }
+      const { data, error } = await supabase.rpc('email_for_login', { p_username: loginEmail, p_password: password })
       if (error) {
         setError(error.message.includes('Too many') ? error.message : 'Could not log in. Please try again.')
         return

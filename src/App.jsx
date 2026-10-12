@@ -16,6 +16,7 @@ const Customers = lazy(() => import('./pages/Customers'))
 const Team = lazy(() => import('./pages/Team'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const Reports = lazy(() => import('./pages/Reports'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 function Spinner() {
   return <div className="flex h-64 items-center justify-center gap-3 text-slate-600"><div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />Loading...</div>
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/notifications" element={page(<Notifications />)} />
         {profile.role === 'admin' && <Route path="/team" element={page(<Team />)} />}
         {profile.role === 'admin' && <Route path="/reports" element={page(<Reports />)} />}
+        {profile.role === 'admin' && <Route path="/settings" element={page(<Settings />)} />}
         <Route path="*" element={<Navigate to="/" />} />
       </Route>
     </Routes>
