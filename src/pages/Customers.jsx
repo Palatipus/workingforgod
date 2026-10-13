@@ -1,177 +1,37 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase, selectAll } from '../supabase'
-import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
-import ReceiptActions from '../components/ReceiptActions'
-import { money, paymentMethods } from '../format'
-import { downloadStatement, shareStatement, shareNotice, loadPdf, invoiceNumber } from '../invoice'
+import { money } from '../format'
+import { CustomerForm } from './customers/dialogs'
 
-function CustomerPayment({ customer, onClose, onSaved }) {
-  const owed = Number(customer.owed)
-  const [amount, setAmount] = useState('')
-  const [method, setMethod] = useState('cash')
-  const [note, setNote] = useState('')
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function save(e) {
-    e.preventDefault()
-    setSaving(true)
-    setError('')
-    const { data, error } = await supabase.rpc('record_customer_payment', {
-      p_customer_id: customer.customer_id,
-      p_amount: Math.round(Number(amount) * 100) / 100,
-      p_method: method,
-      p_note: note || null,
-    })
-    if (error) {
-      setError(error.message)
-      setSaving(false)
-      return
-    }
-    onSaved(data)
-  }
-
+function Owes({ row }) {
+  const owed = Number(row.owed)
+  const credit = Number(row.credit)
   return (
-    <Modal title={'Payment from ' + customer.name} onClose={onClose}>
-      <form onSubmit={save} className="space-y-4">
-        <div className="text-sm text-slate-500">
-          Owes <span className="font-semibold text-red-600">{money(owed)}</span>. The payment clears their oldest unpaid orders first.
-        </div>
-        <div>
-          <div className="flex items-center justify-between">
-            <label className="text-xs text-slate-500">Amount (GH₵)</label>
-            <button type="button" onClick={() => setAmount(owed.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
-              Everything owed
-            </button>
-          </div>
-          <input className="input" type="number" min="0.01" step="0.01" max={owed} value={amount}
-            onChange={(e) => setAmount(e.target.value)} required />
-        </div>
-        <select className="input" value={method} onChange={(e) => setMethod(e.target.value)}>
-          {paymentMethods.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-        </select>
-        <input className="input" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
-        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-        <div className="flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button disabled={saving} className="btn">{saving ? 'Saving...' : 'Save payment'}</button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-function EditCustomer({ customer, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    name: customer.name || '',
-    phone: customer.phone || '',
-    email: customer.email || '',
-    location: customer.location || '',
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  async function save(e) {
-    e.preventDefault()
-    setSaving(true)
-    const { error } = await supabase.from('customers').update({
-      name: form.name.trim(),
-      phone: form.phone.trim() || null,
-      email: form.email.trim() || null,
-      location: form.location.trim() || null,
-    }).eq('id', customer.customer_id)
-    if (error) {
-      setError(error.message)
-      setSaving(false)
-      return
-    }
-    onSaved()
-  }
-
-  return (
-    <Modal title="Edit customer" onClose={onClose}>
-      <form onSubmit={save} className="space-y-4">
-        <input className="input" placeholder="Customer or lab name" value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })} required />
-        <input className="input" placeholder="Phone" value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        <input className="input" type="email" placeholder="Email" value={form.email}
-          onChange={(e) => setForm({ ...form, email: e.target.value })} />
-        <input className="input" placeholder="Location" value={form.location}
-          onChange={(e) => setForm({ ...form, location: e.target.value })} />
-        <p className="text-xs text-slate-400">Changes show on new invoices and on old invoices when they are downloaded again.</p>
-        {error && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
-        <div className="flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="btn-ghost">Cancel</button>
-          <button disabled={saving} className="btn">{saving ? 'Saving...' : 'Save'}</button>
-        </div>
-      </form>
-    </Modal>
-  )
-}
-
-async function statementData(row) {
-  const [orders, payments, refunds] = await Promise.all([
-    supabase.from('order_list').select('id, invoice_number, created_at, due_date, total, paid, balance, overdue')
-      .eq('customer_id', row.customer_id).is('cancelled_at', null).order('created_at'),
-    supabase.from('payments').select('amount, method, paid_at, orders!inner(order_number, customer_id)')
-      .eq('orders.customer_id', row.customer_id).order('paid_at'),
-    supabase.from('refunds').select('amount, method, created_at, orders!inner(order_number, customer_id)')
-      .eq('orders.customer_id', row.customer_id),
-  ])
-  if (orders.error || payments.error || refunds.error) throw new Error('load failed')
-  const money = [
-    ...(payments.data || []).map((p) => ({ ...p, refund: false })),
-    ...(refunds.data || []).map((r) => ({ ...r, paid_at: r.created_at, refund: true })),
-  ].sort((a, b) => a.paid_at.localeCompare(b.paid_at))
-  return {
-    customer: { name: row.name, phone: row.phone, location: row.location },
-    date: new Date().toISOString(),
-    orders: orders.data || [],
-    payments: money.map((p) => ({
-      ...p,
-      invoice_number: invoiceNumber(p.orders.order_number),
-    })),
-  }
-}
-
-function StatementButtons({ row, onNote }) {
-  const [busy, setBusy] = useState(false)
-
-  async function run(share) {
-    setBusy(true)
-    try {
-      const data = await statementData(row)
-      if (share) onNote(shareNotice(await shareStatement(data)))
-      else await downloadStatement(data)
-    } catch {
-      onNote('Could not make the statement. Check your connection and try again.')
-    }
-    setBusy(false)
-  }
-
-  return (
-    <>
-      <button disabled={busy} onClick={() => run(false)} className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">Statement</button>
-      <button disabled={busy} onClick={() => run(true)} className="text-xs font-medium text-indigo-600 hover:underline disabled:opacity-50">Share</button>
-    </>
+    <div className="text-right">
+      {owed > 0.005
+        ? <span className="font-semibold text-red-600">{money(owed)}</span>
+        : <span className="text-slate-400">-</span>}
+      {Number(row.overdue) > 0.005 && <div className="text-xs font-semibold text-red-600">{money(row.overdue)} overdue</div>}
+      {credit > 0.005 && <div className="text-xs font-semibold text-indigo-700">{money(credit)} credit</div>}
+    </div>
   )
 }
 
 export default function Customers() {
+  const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [search, setSearch] = useState('')
   const [onlyOwing, setOnlyOwing] = useState(false)
-  const [paying, setPaying] = useState(null)
-  const [editing, setEditing] = useState(null)
-  const [shareNote, setShareNote] = useState('')
+  const [adding, setAdding] = useState(false)
   const [loadFailed, setLoadFailed] = useState(false)
-  const [newReceipt, setNewReceipt] = useState(null)
+  const [loading, setLoading] = useState(true)
 
   async function load() {
     const { data, error } = await selectAll(() =>
       supabase.from('customer_balances').select('*').order('owed', { ascending: false }).order('name').order('customer_id'))
+    setLoading(false)
     if (error) {
       setLoadFailed(true)
       return
@@ -182,7 +42,6 @@ export default function Customers() {
 
   useEffect(() => {
     load()
-    loadPdf()
     const channel = supabase
       .channel('customers-live')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, load)
@@ -201,22 +60,30 @@ export default function Customers() {
 
   let totalOwed = 0
   let totalOverdue = 0
+  let totalCredit = 0
   for (const r of rows) {
     if (Number(r.owed) > 0) totalOwed += Number(r.owed)
     if (Number(r.overdue) > 0) totalOverdue += Number(r.overdue)
+    if (Number(r.credit) > 0) totalCredit += Number(r.credit)
   }
+
+  const open = (r) => navigate('/customers/' + r.customer_id)
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Customers</h1>
-          <p className="text-sm text-slate-500">What each customer has bought and what they still owe.</p>
+          <p className="text-sm text-slate-500">Tap a customer to see their orders, payments, credit and statement.</p>
         </div>
-        <div className="text-right">
-          <div className="text-xs text-slate-500">Total owed to the business</div>
-          <div className="text-xl font-bold text-red-600">{money(totalOwed)}</div>
-          {totalOverdue > 0.005 && <div className="text-xs font-semibold text-red-600">{money(totalOverdue)} overdue</div>}
+        <div className="flex items-end gap-4">
+          <div className="text-right">
+            <div className="text-xs text-slate-500">Owed to the business</div>
+            <div className="text-xl font-bold text-red-600">{money(totalOwed)}</div>
+            {totalOverdue > 0.005 && <div className="text-xs font-semibold text-red-600">{money(totalOverdue)} overdue</div>}
+            {totalCredit > 0.005 && <div className="text-xs font-semibold text-indigo-700">{money(totalCredit)} held as credit</div>}
+          </div>
+          <button onClick={() => setAdding(true)} className="btn">+ Add customer</button>
         </div>
       </div>
 
@@ -229,21 +96,24 @@ export default function Customers() {
         </label>
       </div>
 
-      {shareNote && <p className="text-sm text-slate-500">{shareNote}</p>}
-
-      {newReceipt && (
-        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          <span className="font-medium">Payment from {newReceipt.name} saved.</span>
-          <span className="flex items-center gap-4">
-            <ReceiptActions receiptId={newReceipt.id} />
-            <button onClick={() => setNewReceipt(null)} aria-label="Dismiss" className="text-emerald-700">✕</button>
-          </span>
-        </div>
-      )}
-
       {loadFailed && <LoadError onRetry={load} />}
 
-      <div className="overflow-x-auto card">
+      {/* Phones */}
+      <div className="card divide-y divide-slate-100 md:hidden">
+        {shown.map((r) => (
+          <button key={r.customer_id} onClick={() => open(r)} className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left text-sm">
+            <div className="min-w-0">
+              <div className="truncate font-medium">{r.name}</div>
+              <div className="truncate text-xs text-slate-400">{[r.phone, r.location].filter(Boolean).join(' · ') || ' '}</div>
+            </div>
+            <Owes row={r} />
+          </button>
+        ))}
+        {!loading && !loadFailed && shown.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">No customers found</div>}
+      </div>
+
+      {/* Bigger screens */}
+      <div className="hidden overflow-x-auto card md:block">
         <table className="w-full whitespace-nowrap text-sm">
           <thead className="text-left text-xs uppercase text-slate-400">
             <tr>
@@ -253,55 +123,32 @@ export default function Customers() {
               <th className="px-5 py-3 text-right">Bought</th>
               <th className="px-5 py-3 text-right">Paid</th>
               <th className="px-5 py-3 text-right">Owes</th>
-              <th className="px-5 py-3"></th>
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => {
-              const owes = Number(r.owed) > 0.005
-              return (
-                <tr key={r.customer_id} className="border-t border-slate-100">
-                  <td className="px-5 py-3">
-                    <div className="font-medium">{r.name}</div>
-                    {r.location && <div className="text-xs text-slate-400">{r.location}</div>}
-                  </td>
-                  <td className="px-5 py-3 text-slate-500">{r.phone}</td>
-                  <td className="px-5 py-3 text-center">{r.orders}</td>
-                  <td className="px-5 py-3 text-right">{money(r.total)}</td>
-                  <td className="px-5 py-3 text-right text-emerald-600">{money(r.paid)}</td>
-                  <td className={'px-5 py-3 text-right font-semibold ' + (owes ? 'text-red-600' : 'text-slate-400')}>
-                    {owes ? money(r.owed) : '-'}
-                    {Number(r.overdue) > 0.005 && (
-                      <div className="text-xs font-semibold text-red-600">{money(r.overdue)} overdue</div>
-                    )}
-                  </td>
-                  <td className="px-5 py-3">
-                    <div className="flex items-center justify-end gap-3">
-                      <button onClick={() => setEditing(r)} className="text-xs font-medium text-slate-500 hover:underline">Edit</button>
-                      {Number(r.orders) > 0 && <StatementButtons row={r} onNote={setShareNote} />}
-                      {owes && (
-                        <button onClick={() => setPaying(r)} className="btn !px-3 !py-1 text-xs">Record payment</button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              )
-            })}
-            {!loadFailed && shown.length === 0 && (
-              <tr><td colSpan="7" className="px-5 py-12 text-center text-slate-400">No customers found</td></tr>
+            {shown.map((r) => (
+              <tr key={r.customer_id} onClick={() => open(r)} className="cursor-pointer border-t border-slate-100 hover:bg-slate-50">
+                <td className="px-5 py-3">
+                  <div className="font-medium">{r.name}</div>
+                  {r.location && <div className="text-xs text-slate-400">{r.location}</div>}
+                </td>
+                <td className="px-5 py-3 text-slate-500">{r.phone}</td>
+                <td className="px-5 py-3 text-center">{r.orders}</td>
+                <td className="px-5 py-3 text-right">{money(r.total)}</td>
+                <td className="px-5 py-3 text-right text-emerald-600">{money(r.paid)}</td>
+                <td className="px-5 py-3"><Owes row={r} /></td>
+              </tr>
+            ))}
+            {!loading && !loadFailed && shown.length === 0 && (
+              <tr><td colSpan="6" className="px-5 py-12 text-center text-slate-400">No customers found</td></tr>
             )}
           </tbody>
         </table>
       </div>
 
-      {editing && (
-        <EditCustomer customer={editing} onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); load() }} />
-      )}
-
-      {paying && (
-        <CustomerPayment customer={paying} onClose={() => setPaying(null)}
-          onSaved={(id) => { setNewReceipt({ id, name: paying.name }); setPaying(null); load() }} />
+      {adding && (
+        <CustomerForm others={rows} onClose={() => setAdding(false)}
+          onSaved={(id) => { setAdding(false); navigate('/customers/' + id) }} />
       )}
     </div>
   )

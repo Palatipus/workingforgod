@@ -3,6 +3,7 @@ import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import UsernameDialog from '../components/UsernameDialog'
+import NameDialog from '../components/NameDialog'
 import LoadError from '../components/LoadError'
 
 const statusBadge = {
@@ -44,6 +45,7 @@ export default function Team() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [renaming, setRenaming] = useState(null)
+  const [naming, setNaming] = useState(null)
   const [loadFailed, setLoadFailed] = useState(false)
 
   async function load() {
@@ -81,64 +83,57 @@ export default function Team() {
 
       {loadFailed && <LoadError onRetry={load} />}
 
-      <div className="overflow-x-auto card">
-        <table className="w-full whitespace-nowrap text-sm">
-          <thead className="text-left text-xs uppercase text-slate-400">
-            <tr>
-              <th className="px-5 py-3">Name</th>
-              <th className="px-5 py-3">Role</th>
-              <th className="px-5 py-3">Status</th>
-              <th className="px-5 py-3">Joined</th>
-              <th className="px-5 py-3"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.map((person) => {
-              const me = person.id === profile.id
-              const [badge, badgeCls] = statusBadge[person.status]
-              const act = (action) => () => { setError(''); setConfirming({ person, action }) }
-              return (
-                <tr key={person.id} className="border-t border-slate-100">
-                  <td className="px-5 py-3">
-                    <div className="font-medium">{person.full_name}{me && <span className="ml-2 text-xs text-slate-400">(you)</span>}</div>
-                    <button onClick={() => setRenaming(person)} className="text-xs text-slate-400 hover:text-indigo-600">
-                      {person.username ? '@' + person.username : <span className="text-amber-600">No username, set one</span>}
-                    </button>
-                  </td>
-                  <td className="px-5 py-3 capitalize">{person.role}</td>
-                  <td className="px-5 py-3">
-                    <span className={'rounded-full px-2 py-0.5 text-xs font-medium ' + badgeCls}>{badge}</span>
-                  </td>
-                  <td className="px-5 py-3 text-slate-500">{new Date(person.created_at).toLocaleDateString()}</td>
-                  <td className="px-5 py-3">
-                    {!me && (
-                      <div className="flex justify-end gap-2">
-                        {person.status === 'pending' && (
-                          <>
-                            <ActionButton onClick={act('approve')}>Approve</ActionButton>
-                            <ActionButton danger onClick={act('reject')}>Reject</ActionButton>
-                          </>
-                        )}
-                        {person.status === 'approved' && (
-                          <>
-                            {person.role === 'admin'
-                              ? <ActionButton onClick={act('makeSales')}>Make salesperson</ActionButton>
-                              : <ActionButton onClick={act('makeAdmin')}>Make admin</ActionButton>}
-                            <ActionButton danger onClick={act('remove')}>Remove access</ActionButton>
-                          </>
-                        )}
-                        {person.status === 'rejected' && (
-                          <ActionButton onClick={act('restore')}>Restore access</ActionButton>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
+      {/* One list for phone and desktop: details on the left, actions wrap underneath on small screens */}
+      <div className="card divide-y divide-slate-100">
+        {sorted.map((person) => {
+          const me = person.id === profile.id
+          const [badge, badgeCls] = statusBadge[person.status]
+          const act = (action) => () => { setError(''); setConfirming({ person, action }) }
+          return (
+            <div key={person.id} className="flex flex-col gap-3 px-5 py-4 text-sm md:flex-row md:items-center md:justify-between">
+              <div className="min-w-0">
+                <button onClick={() => setNaming(person)} title="Change name" className="text-left font-medium hover:text-indigo-600">
+                  {person.full_name}{me && <span className="ml-2 text-xs text-slate-400">(you)</span>}
+                </button>
+                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+                  <button onClick={() => setRenaming(person)} className="text-slate-400 hover:text-indigo-600">
+                    {person.username ? '@' + person.username : <span className="text-amber-600">No username, set one</span>}
+                  </button>
+                  <span className="capitalize text-slate-500">{person.role}</span>
+                  <span className={'rounded-full px-2 py-0.5 font-medium ' + badgeCls}>{badge}</span>
+                  <span className="text-slate-400">Joined {new Date(person.created_at).toLocaleDateString()}</span>
+                </div>
+              </div>
+              {!me && (
+                <div className="flex flex-wrap gap-2">
+                  {person.status === 'pending' && (
+                    <>
+                      <ActionButton onClick={act('approve')}>Approve</ActionButton>
+                      <ActionButton danger onClick={act('reject')}>Reject</ActionButton>
+                    </>
+                  )}
+                  {person.status === 'approved' && (
+                    <>
+                      {person.role === 'admin'
+                        ? <ActionButton onClick={act('makeSales')}>Make salesperson</ActionButton>
+                        : <ActionButton onClick={act('makeAdmin')}>Make admin</ActionButton>}
+                      <ActionButton danger onClick={act('remove')}>Remove access</ActionButton>
+                    </>
+                  )}
+                  {person.status === 'rejected' && (
+                    <ActionButton onClick={act('restore')}>Restore access</ActionButton>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
       </div>
+
+      {naming && (
+        <NameDialog person={naming.id === profile.id ? null : naming} current={naming.full_name}
+          onClose={() => setNaming(null)} onSaved={() => { setNaming(null); load() }} />
+      )}
 
       {renaming && (
         <UsernameDialog person={renaming.id === profile.id ? null : renaming} current={renaming.username}

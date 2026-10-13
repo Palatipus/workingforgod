@@ -13,11 +13,12 @@ const exports = [
     text: 'One row per invoice: customer, salesperson, total, paid, balance, due date and status.',
     dated: true,
     async build(range) {
-      const rows = await fetchAll(() => applyRange(supabase.from('order_list').select('*').order('created_at'), range))
+      const rows = await fetchAll(() => applyRange(supabase.from('order_list').select('*').order('created_at').order('id'), range))
       return toCsv(
-        ['Invoice', 'Date', 'Customer', 'Salesperson', 'Total', 'Paid', 'Balance', 'Due date', 'Overdue', 'Pending delivery', 'Cancelled'],
+        ['Invoice', 'Date', 'Customer', 'Salesperson', 'Total', 'Paid', 'Balance', 'Due date', 'Overdue', 'Pending delivery', 'Cancelled', 'Opening balance'],
         rows.map((o) => [o.invoice_number, dateTime(o.created_at), o.customer_name, o.salesperson, num(o.total), num(o.paid),
-          num(o.balance), o.due_date || '', o.overdue ? 'Yes' : '', o.has_pending ? 'Yes' : '', o.cancelled_at ? dateTime(o.cancelled_at) : '']),
+          num(o.balance), o.due_date || '', o.overdue ? 'Yes' : '', o.has_pending ? 'Yes' : '', o.cancelled_at ? dateTime(o.cancelled_at) : '',
+          o.is_opening ? 'Yes' : '']),
       )
     },
   },
@@ -51,7 +52,7 @@ const exports = [
       const rows = await fetchAll(() => applyRange(
         supabase.from('receipts')
           .select('receipt_number, created_at, amount, method, note, reversed_at, customers(name), receiver:profiles!receipts_created_by_fkey(full_name)')
-          .order('created_at'),
+          .order('created_at').order('id'),
         range))
       return toCsv(
         ['Receipt', 'Date', 'Customer', 'Amount', 'Method', 'Received by', 'Note', 'Reversed'],
@@ -67,7 +68,7 @@ const exports = [
     dated: true,
     async build(range) {
       const rows = await fetchAll(() => applyRange(
-        supabase.from('refunds').select('refund_number, created_at, amount, method, note, orders(order_number, customer_name), profiles(full_name)').order('created_at'),
+        supabase.from('refunds').select('refund_number, created_at, amount, method, note, orders(order_number, customer_name), profiles(full_name)').order('created_at').order('id'),
         range))
       return toCsv(
         ['Refund', 'Date', 'Invoice', 'Customer', 'Amount', 'Method', 'By', 'Reason'],
@@ -82,10 +83,10 @@ const exports = [
     text: 'What every customer has bought, paid and still owes today, including overdue amounts.',
     dated: false,
     async build() {
-      const rows = await fetchAll(() => supabase.from('customer_balances').select('*').order('name'))
+      const rows = await fetchAll(() => supabase.from('customer_balances').select('*').order('name').order('customer_id'))
       return toCsv(
-        ['Customer', 'Phone', 'Email', 'Location', 'Orders', 'Bought', 'Paid', 'Owes', 'Overdue'],
-        rows.map((c) => [c.name, c.phone, c.email, c.location, c.orders, num(c.total), num(c.paid), num(c.owed), num(c.overdue)]),
+        ['Customer', 'Phone', 'Email', 'Location', 'Orders', 'Bought', 'Paid', 'Owes', 'Overdue', 'Credit held'],
+        rows.map((c) => [c.name, c.phone, c.email, c.location, c.orders, num(c.total), num(c.paid), num(c.owed), num(c.overdue), num(c.credit)]),
       )
     },
   },
@@ -96,8 +97,8 @@ const exports = [
     dated: false,
     async build() {
       const [products, owed] = await Promise.all([
-        fetchAll(() => supabase.from('products').select('id, name, brand, category, stock_qty, reorder_level').eq('is_active', true).order('name')),
-        fetchAll(() => supabase.from('product_owed').select('*')),
+        fetchAll(() => supabase.from('products').select('id, name, brand, category, stock_qty, reorder_level').eq('is_active', true).order('name').order('id')),
+        fetchAll(() => supabase.from('product_owed').select('*').order('product_id')),
       ])
       const owedBy = {}
       for (const o of owed) owedBy[o.product_id] = o.owed_qty
@@ -115,7 +116,7 @@ const exports = [
     dated: true,
     async build(range) {
       const rows = await fetchAll(() => applyRange(
-        supabase.from('stock_movements').select('created_at, kind, change, balance_after, note, products(name), orders(order_number), profiles(full_name)').order('created_at'),
+        supabase.from('stock_movements').select('created_at, kind, change, balance_after, note, products(name), orders(order_number), profiles(full_name)').order('created_at').order('id'),
         range))
       return toCsv(
         ['Date', 'Product', 'What', 'Change', 'Stock after', 'Invoice', 'By', 'Note'],

@@ -27,6 +27,7 @@ function toForm(data) {
     merchantNo: data.bank?.merchantNo || '',
     accountName: data.bank?.accountName || '',
     terms: [...(data.terms || [])],
+    defaultDueDays: data.defaultDueDays ? String(data.defaultDueDays) : '',
   }
 }
 
@@ -40,6 +41,7 @@ function fromForm(f) {
     address: f.address.split('\n').map((l) => l.trim()).filter(Boolean),
     bank: { name: f.bankName.trim(), account: f.account.trim(), merchantNo: f.merchantNo.trim(), accountName: f.accountName.trim() },
     terms: f.terms.map((t) => t.trim()).filter(Boolean),
+    defaultDueDays: Number(f.defaultDueDays) > 0 ? Math.round(Number(f.defaultDueDays)) : null,
   }
 }
 
@@ -98,9 +100,12 @@ export default function Settings() {
     const data = fromForm(form)
     if (!data.name) return setMessage({ ok: false, text: 'The business name cannot be empty.' })
     setSaving(true)
-    const { error } = await supabase.from('company_settings').update({ data }).eq('id', 1)
+    const { data: saved, error } = await supabase.from('company_settings').update({ data }).eq('id', 1).select('id')
     setSaving(false)
     if (error) return setMessage({ ok: false, text: error.message })
+    if (!saved || saved.length === 0) {
+      return setMessage({ ok: false, text: 'Nothing was saved. Only admins can change these details. Make sure schema_update_11.sql has been run.' })
+    }
     applyCompany(data)
     setMessage({ ok: true, text: 'Saved. New invoices, receipts and statements will use these details.' })
     load()
@@ -157,6 +162,15 @@ export default function Settings() {
           <Field label="Merchant number"><input className="input" value={form.merchantNo} onChange={(e) => update('merchantNo', e.target.value)} /></Field>
         </div>
         <p className="text-xs text-amber-700">Double-check these. Customers send money to whatever is printed here.</p>
+      </div>
+
+      <div className="card space-y-4 p-5">
+        <div className="text-sm font-semibold">Credit</div>
+        <Field label="Default days to pay a balance"
+          hint="When an order isn't fully paid, the due date starts this many days ahead (staff can change it). Leave empty for no default.">
+          <input className="input !w-32" type="number" min="1" step="1" placeholder="e.g. 30" value={form.defaultDueDays}
+            onChange={(e) => update('defaultDueDays', e.target.value)} />
+        </Field>
       </div>
 
       <div className="card space-y-3 p-5">

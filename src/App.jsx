@@ -2,6 +2,7 @@ import { lazy, Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useAuth } from './AuthContext'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
 import { missingConfig } from './supabase'
 import Login from './pages/Login'
 import Pending from './pages/Pending'
@@ -13,6 +14,7 @@ const Inventory = lazy(() => import('./pages/Inventory'))
 const NewOrder = lazy(() => import('./pages/NewOrder'))
 const Orders = lazy(() => import('./pages/Orders'))
 const Customers = lazy(() => import('./pages/Customers'))
+const CustomerPage = lazy(() => import('./pages/CustomerPage'))
 const Team = lazy(() => import('./pages/Team'))
 const Notifications = lazy(() => import('./pages/Notifications'))
 const Reports = lazy(() => import('./pages/Reports'))
@@ -22,8 +24,9 @@ function Spinner() {
   return <div className="flex h-64 items-center justify-center gap-3 text-slate-600"><div className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-indigo-600" />Loading...</div>
 }
 
+// Each page has its own safety net, so an error on one page doesn't blank the whole app
 function page(element) {
-  return <Suspense fallback={<Spinner />}>{element}</Suspense>
+  return <ErrorBoundary><Suspense fallback={<Spinner />}>{element}</Suspense></ErrorBoundary>
 }
 
 export default function App() {
@@ -74,6 +77,7 @@ export default function App() {
         <Route path="/orders/new" element={page(<NewOrder />)} />
         <Route path="/inventory" element={page(<Inventory />)} />
         <Route path="/customers" element={page(<Customers />)} />
+        <Route path="/customers/:id" element={page(<CustomerPage />)} />
         <Route path="/notifications" element={page(<Notifications />)} />
         {profile.role === 'admin' && <Route path="/team" element={page(<Team />)} />}
         {profile.role === 'admin' && <Route path="/reports" element={page(<Reports />)} />}

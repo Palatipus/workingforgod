@@ -6,7 +6,10 @@ import NotificationBell from './NotificationBell'
 import Icon from './Icon'
 import UsernameDialog from './UsernameDialog'
 import PasswordDialog from './PasswordDialog'
+import NameDialog from './NameDialog'
 import Modal from './Modal'
+import PushPrompt from './PushPrompt'
+import { syncPush } from '../push'
 import { useInstallPrompt, useOnline } from '../install'
 
 const links = [
@@ -22,12 +25,15 @@ export default function Layout() {
   // Ask people without a username to pick one (accounts made before usernames existed)
   const [usernameOpen, setUsernameOpen] = useState(!profile.username)
   const [passwordOpen, setPasswordOpen] = useState(false)
+  const [nameOpen, setNameOpen] = useState(false)
   const [accountOpen, setAccountOpen] = useState(false)
   const { available: canInstall, install } = useInstallPrompt()
   const online = useOnline()
 
   // Company details for invoices, receipts and statements
   useEffect(() => { loadCompany() }, [])
+  // Keep this device's phone notifications pointed at whoever is signed in
+  useEffect(() => { syncPush() }, [profile.id])
   const isAdmin = profile.role === 'admin'
   const sideLinks = isAdmin
     ? [...links, { to: '/reports', label: 'Reports', icon: 'chart' }, { to: '/team', label: 'Team', icon: 'team' },
@@ -63,7 +69,8 @@ export default function Layout() {
         </nav>
 
         <div className="rounded-xl border border-slate-200 p-3">
-          <div className="truncate text-sm font-semibold">{profile.full_name}</div>
+          <button onClick={() => setNameOpen(true)} title="Change your name"
+            className="block max-w-full truncate text-left text-sm font-semibold hover:text-indigo-600">{profile.full_name}</button>
           <button onClick={() => setUsernameOpen(true)} className="block text-xs text-slate-400 hover:text-indigo-600">
             {profile.username ? '@' + profile.username : 'Set a username'} · <span className="capitalize">{profile.role}</span>
           </button>
@@ -111,6 +118,7 @@ export default function Layout() {
             You're offline. Changes can't be saved until your connection is back.
           </div>
         )}
+        <PushPrompt />
         <Outlet />
       </main>
 
@@ -123,6 +131,7 @@ export default function Layout() {
             <button onClick={() => { setAccountOpen(false); setUsernameOpen(true) }} className="btn-ghost w-full !py-2.5">
               {profile.username ? 'Change username' : 'Set a username'}
             </button>
+            <button onClick={() => { setAccountOpen(false); setNameOpen(true) }} className="btn-ghost w-full !py-2.5">Change name</button>
             <button onClick={() => { setAccountOpen(false); setPasswordOpen(true) }} className="btn-ghost w-full !py-2.5">Change password</button>
             <button onClick={signOut} className="w-full rounded-lg py-2.5 text-sm font-medium text-red-600 hover:bg-red-50">Sign out</button>
           </div>
@@ -130,6 +139,10 @@ export default function Layout() {
       )}
 
       {passwordOpen && <PasswordDialog onClose={() => setPasswordOpen(false)} />}
+      {nameOpen && (
+        <NameDialog current={profile.full_name} onClose={() => setNameOpen(false)}
+          onSaved={async () => { await refreshProfile(); setNameOpen(false) }} />
+      )}
 
       {usernameOpen && (
         <UsernameDialog current={profile.username}

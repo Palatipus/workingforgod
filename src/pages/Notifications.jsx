@@ -4,6 +4,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import LoadError from '../components/LoadError'
 import { notificationTarget } from '../components/NotificationBell'
+import { PushToggle } from '../components/PushPrompt'
 
 const PAGE = 50
 
@@ -54,6 +55,8 @@ export default function Notifications() {
         </div>
         {unread > 0 && <button onClick={markAllRead} className="btn-ghost">Mark all read</button>}
       </div>
+
+      <PushToggle />
 
       <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-600">
         <input type="checkbox" checked={onlyUnread} onChange={(e) => { setOnlyUnread(e.target.checked); setLimit(PAGE) }} />

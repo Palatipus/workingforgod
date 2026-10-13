@@ -16,6 +16,23 @@ const filters = [
   ['cancelled', 'Cancelled'],
 ]
 
+function Badges({ order }) {
+  return (
+    <>
+      {order.is_opening && <span className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">opening balance</span>}
+      {order.cancelled_at && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">cancelled</span>}
+      {order.has_pending && <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-600">pending</span>}
+      {order.overdue && <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">overdue</span>}
+    </>
+  )
+}
+
+function balanceText(order) {
+  if (order.cancelled_at) return ['-', '']
+  const balance = Number(order.balance)
+  return balance > 0.005 ? [money(balance), 'text-red-600'] : ['Paid', 'text-emerald-600']
+}
+
 export default function Orders() {
   const [params, setParams] = useSearchParams()
   const [rows, setRows] = useState([])
@@ -99,7 +116,32 @@ export default function Orders() {
         </div>
       </div>
 
-      <div className="overflow-x-auto card">
+      {/* Phones: one card per order */}
+      <div className="card divide-y divide-slate-100 md:hidden">
+        {rows.map((order) => {
+          const [balance, balanceCls] = balanceText(order)
+          return (
+            <button key={order.id} onClick={() => openOrder(order.id)}
+              className={'block w-full px-4 py-3 text-left text-sm ' + (order.cancelled_at ? 'text-slate-400' : order.has_pending ? 'bg-red-50/50' : '')}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium"><span className={order.cancelled_at ? 'line-through' : ''}>{order.invoice_number}</span><Badges order={order} /></div>
+                  <div className="truncate">{order.customer_name}</div>
+                  <div className="text-xs text-slate-400">{new Date(order.created_at).toLocaleDateString()} · {order.salesperson}</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="font-semibold">{order.cancelled_at ? '-' : money(order.total)}</div>
+                  <div className={'text-xs font-semibold ' + balanceCls}>{balance === 'Paid' || balance === '-' ? balance : 'owes ' + balance}</div>
+                </div>
+              </div>
+            </button>
+          )
+        })}
+        {!loading && !loadFailed && rows.length === 0 && <div className="px-4 py-10 text-center text-sm text-slate-400">No orders found</div>}
+      </div>
+
+      {/* Bigger screens: table */}
+      <div className="hidden overflow-x-auto card md:block">
         <table className="w-full whitespace-nowrap text-sm">
           <thead className="text-left text-xs uppercase text-slate-400">
             <tr>
@@ -114,28 +156,19 @@ export default function Orders() {
           <tbody>
             {rows.map((order) => {
               const cancelled = !!order.cancelled_at
-              const balance = Number(order.balance)
               return (
                 <tr key={order.id} onClick={() => openOrder(order.id)}
                   className={'cursor-pointer border-t border-slate-100 hover:bg-slate-50 ' +
                     (cancelled ? 'text-slate-400' : order.has_pending ? 'bg-red-50/50' : '')}>
                   <td className="px-5 py-3 font-medium">
                     <span className={cancelled ? 'line-through' : ''}>{order.invoice_number}</span>
-                    {cancelled && <span className="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500">cancelled</span>}
-                    {order.has_pending && (
-                      <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-600">pending</span>
-                    )}
-                    {order.overdue && (
-                      <span className="ml-2 rounded-full bg-red-600 px-2 py-0.5 text-xs font-medium text-white">overdue</span>
-                    )}
+                    <Badges order={order} />
                   </td>
                   <td className="px-5 py-3">{order.customer_name}</td>
                   <td className="px-5 py-3 text-slate-500">{order.salesperson}</td>
                   <td className="px-5 py-3 text-slate-500">{new Date(order.created_at).toLocaleDateString()}</td>
                   <td className="px-5 py-3 text-right font-semibold">{cancelled ? '-' : money(order.total)}</td>
-                  <td className={'px-5 py-3 text-right font-semibold ' + (cancelled ? '' : balance > 0.005 ? 'text-red-600' : 'text-emerald-600')}>
-                    {cancelled ? '-' : balance > 0.005 ? money(balance) : 'Paid'}
-                  </td>
+                  <td className={'px-5 py-3 text-right font-semibold ' + balanceText(order)[1]}>{balanceText(order)[0]}</td>
                 </tr>
               )
             })}

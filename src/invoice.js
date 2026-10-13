@@ -5,7 +5,15 @@ let libPromise
 export function loadPdf() {
   if (!libPromise) {
     libPromise = Promise.all([import('jspdf'), import('jspdf-autotable'), import('./logoData'), loadCompany()])
-      .then(([pdf, table, logo]) => ({ jsPDF: pdf.default, autoTable: table.default, logoData: logo.logoData }))
+      .then(([pdf, table, logo]) => ({
+        jsPDF: pdf.jsPDF || pdf.default?.jsPDF || pdf.default,
+        autoTable: table.autoTable || table.default,
+        logoData: logo.logoData,
+      }))
+      .catch((err) => {
+        libPromise = null   // let the next attempt try again instead of failing forever
+        throw err
+      })
   }
   return libPromise
 }
@@ -242,6 +250,7 @@ export function buildInvoice(data, { jsPDF, autoTable, logoData }) {
       4: { cellWidth: 38, halign: 'right', fontStyle: 'bold' },
     },
     didParseCell: (hook) => {
+      if (hook.section === 'head') hook.cell.styles.halign = [0, 2].includes(hook.column.index) ? 'center' : hook.column.index >= 3 ? 'right' : 'left'
       if (hook.section === 'body' && hook.column.index === 1 && String(hook.cell.raw).includes('Pending delivery')) {
         hook.cell.styles.textColor = RED
       }
@@ -424,15 +433,24 @@ export function buildStatement(data, { jsPDF, autoTable, logoData }) {
   doc.text(t.owed > 0.005 ? 'TOTAL OWED' : 'NOTHING OWED', boxX + 5, 56)
   doc.setFontSize(13)
   doc.text(fmt(t.owed), boxX + 5, 63.5)
+  let noteY = 73
   if (t.overdue > 0.005) {
     doc.setFont('helvetica', 'bold')
     doc.setFontSize(8)
     doc.setTextColor(...RED)
-    doc.text('Overdue: ' + fmt(t.overdue), W - M, 73, { align: 'right' })
+    doc.text('Overdue: ' + fmt(t.overdue), W - M, noteY, { align: 'right' })
+    noteY += 4.5
+  }
+  if (Number(data.credit) > 0.005) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(8)
+    doc.setTextColor(...BLUE)
+    doc.text('Credit held for future orders: ' + fmt(data.credit), W - M, noteY, { align: 'right' })
+    noteY += 4.5
   }
 
   autoTable(doc, {
-    startY: 78,
+    startY: Math.max(78, noteY + 2),
     head: [['Invoice', 'Date', 'Due', 'Amount', 'Paid', 'Balance']],
     body: data.orders.map((o) => [
       o.invoice_number,
@@ -450,6 +468,7 @@ export function buildStatement(data, { jsPDF, autoTable, logoData }) {
     footStyles: { fillColor: SOFT, fontStyle: 'bold' },
     columnStyles: { 3: { halign: 'right' }, 4: { halign: 'right' }, 5: { halign: 'right', fontStyle: 'bold' } },
     didParseCell: (hook) => {
+      if (hook.section !== 'body' && hook.column.index >= 3) hook.cell.styles.halign = 'right'
       if (hook.section === 'body' && hook.column.index === 5 && String(hook.cell.raw).includes('OVERDUE')) {
         hook.cell.styles.textColor = RED
       }
@@ -473,6 +492,7 @@ export function buildStatement(data, { jsPDF, autoTable, logoData }) {
         (p.refund ? '- ' : '') + fmt(p.amount),
       ]),
       didParseCell: (hook) => {
+        if (hook.section === 'head' && hook.column.index === 3) hook.cell.styles.halign = 'right'
         if (hook.section === 'body' && String(hook.row.raw[2]).startsWith('Refund')) hook.cell.styles.textColor = RED
       },
       margin: { left: M, right: M },
@@ -505,6 +525,7 @@ export function statementMessage(data) {
     }
   }
   lines.push('', 'TOTAL OWED: ' + fmt(t.owed))
+  if (Number(data.credit) > 0.005) lines.push('Credit held for future orders: ' + fmt(data.credit))
   if (t.owed > 0.005) {
     lines.push('Pay to ' + company.bank.name + ', account ' + company.bank.account + ', merchant no ' + company.bank.merchantNo +
       ' (' + company.bank.accountName + ').', 'Send proof of payment to WhatsApp ' + company.whatsapp + '.')
@@ -579,6 +600,7 @@ export function buildReceipt(data, { jsPDF, autoTable, logoData }) {
       styles: { fontSize: 9, cellPadding: 3, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
       headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', lineWidth: 0 },
       columnStyles: { 1: { halign: 'right', fontStyle: 'bold' } },
+      didParseCell: (hook) => { if (hook.section === 'head' && hook.column.index === 1) hook.cell.styles.halign = 'right' },
     })
     ty = doc.lastAutoTable.finalY + 8
   }
@@ -602,6 +624,19 @@ export function buildReceipt(data, { jsPDF, autoTable, logoData }) {
     doc.setTextColor(...(owes ? RED : OK))
     doc.text(owes ? 'Balance still owed after this payment' : 'All invoices are now fully paid', M + 6, ty + 8.8)
     if (owes) doc.text(fmt(data.balanceAfter), W - M - 6, ty + 8.8, { align: 'right' })
+    ty += 18
+  }
+
+  // Money kept for future orders (a deposit or overpayment)
+  if (!data.reversed && Number(data.creditAfter) > 0.005) {
+    doc.setFillColor(...SOFT)
+    doc.setDrawColor(...LINE)
+    doc.roundedRect(M, ty, W - 2 * M, 14, 3, 3, 'FD')
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9.5)
+    doc.setTextColor(...BLUE)
+    doc.text('Credit kept for future orders', M + 6, ty + 8.8)
+    doc.text(fmt(data.creditAfter), W - M - 6, ty + 8.8, { align: 'right' })
   }
 
   drawFooter(doc)
@@ -619,6 +654,7 @@ export function receiptMessage(data) {
   if (data.balanceAfter !== null && data.balanceAfter !== undefined) {
     lines.push(Number(data.balanceAfter) > 0.005 ? 'Balance still owed: ' + fmt(data.balanceAfter) : 'All invoices fully paid. Thank you!')
   }
+  if (Number(data.creditAfter) > 0.005) lines.push('Credit kept for future orders: ' + fmt(data.creditAfter))
   return lines.join('\n')
 }
 
@@ -678,6 +714,7 @@ export function buildRefund(data, { jsPDF, autoTable, logoData }) {
       styles: { fontSize: 9, cellPadding: 3, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 } },
       headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', lineWidth: 0 },
       columnStyles: { 1: { halign: 'center', cellWidth: 20 } },
+      didParseCell: (hook) => { if (hook.section === 'head' && hook.column.index === 1) hook.cell.styles.halign = 'center' },
     })
     ty = doc.lastAutoTable.finalY + 8
   }

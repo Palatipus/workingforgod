@@ -33,7 +33,7 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
     setFailed(false)
     const { data, error } = await supabase
       .from('orders')
-      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customer_name, customer_phone, customer_location, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), canceller:profiles!orders_cancelled_by_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, product_name, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount)), refunds(id, refund_number, amount, method, note, created_at), order_returns(id, item_id, owed_removed, returned, restocked, reason, created_at, profiles(full_name))')
+      .select('id, order_number, created_at, due_date, notes, cancelled_at, cancel_reason, customer_id, customer_name, customer_phone, customer_location, opening_amount, customers(name, phone, location), salesperson:profiles!orders_salesperson_id_fkey(full_name), canceller:profiles!orders_cancelled_by_fkey(full_name), order_items(id, qty, price, pending_qty, delivered_at, product_name, products(name)), payments(id, amount, method, note, paid_at, receipt_id, receipts(receipt_number, amount)), refunds(id, refund_number, amount, method, note, created_at), order_returns(id, item_id, owed_removed, returned, restocked, reason, created_at, profiles(full_name))')
       .eq('id', orderId)
       .maybeSingle()
     if (error) {
@@ -70,7 +70,9 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
   if (!order) return <Modal title="Loading..." onClose={onClose}><div className="h-24" /></Modal>
 
   const cancelled = !!order.cancelled_at
-  let total = 0
+  // An opening balance is debt from before the app: no items, just an amount
+  const opening = Number(order.opening_amount || 0)
+  let total = opening
   for (const item of order.order_items) total += item.qty * item.price
   let paid = 0
   for (const p of order.payments) paid += Number(p.amount)
@@ -102,12 +104,15 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
       paid,
       previousBalance: earlierOwed,
       notes: [order.notes, returnsSummary()].filter(Boolean).join('  '),
-      items: order.order_items.filter((item) => item.qty > 0).map((item) => ({
-        name: itemLabel(item),
-        qty: item.qty,
-        price: item.price,
-        pending_qty: item.pending_qty,
-      })),
+      items: [
+        ...(opening > 0 ? [{ name: 'Opening balance brought forward', qty: 1, price: opening, pending_qty: 0 }] : []),
+        ...order.order_items.filter((item) => item.qty > 0).map((item) => ({
+          name: itemLabel(item),
+          qty: item.qty,
+          price: item.price,
+          pending_qty: item.pending_qty,
+        })),
+      ],
     }
   }
 
@@ -160,7 +165,14 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
         <div className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900"><span className="font-semibold">Note:</span> {order.notes}</div>
       )}
 
-      <div className="mt-6 overflow-x-auto"><table className="w-full whitespace-nowrap text-sm">
+      {opening > 0 && (
+        <div className="mt-6 flex items-center justify-between rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <span><span className="font-semibold">Opening balance</span>: owed from before the app was used</span>
+          <span className="font-bold">{money(opening)}</span>
+        </div>
+      )}
+
+      {order.order_items.length > 0 && <div className="mt-6 overflow-x-auto"><table className="w-full whitespace-nowrap text-sm">
         <thead className="text-left text-xs uppercase text-slate-400">
           <tr><th className="py-2">Item</th><th className="py-2 text-center">Qty</th><th className="py-2 text-right">Price</th><th className="py-2 text-right">Amount</th><th className="py-2"></th></tr>
         </thead>
@@ -194,7 +206,7 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
             )
           })}
         </tbody>
-      </table></div>
+      </table></div>}
 
       <div className="mt-4 space-y-1 border-t border-slate-200 pt-4 text-sm">
         <div className="flex justify-between"><span className="text-slate-500">Order total</span><span className="font-semibold">{money(total)}</span></div>
@@ -329,7 +341,9 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
 
       {cancelling && (
         <ConfirmDialog title={'Cancel ' + invoiceNumber(order.order_number) + '?'} confirmLabel="Yes, cancel order"
-          text={order.payments.length > 0
+          text={order.refunds.length > 0
+            ? 'This order has had a refund, so it cannot be cancelled. Use "Return items" to take everything off it instead.'
+            : order.payments.length > 0
             ? (isAdmin
               ? 'This order has payments. Reverse them first (Reverse, next to each payment), then cancel.'
               : 'This order has payments, so it cannot be cancelled yet. Ask an admin to reverse the payments first.')

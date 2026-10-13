@@ -30,3 +30,33 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(request).catch(() => caches.match('/logo.png')))
   }
 })
+
+// Phone notifications (sent by the send-push Supabase function)
+self.addEventListener('push', (event) => {
+  let data = {}
+  try { data = event.data ? event.data.json() : {} } catch { data = { body: event.data && event.data.text() } }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'WFG Sales', {
+      body: data.body || 'You have a new notification',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      tag: data.tag,
+      data: { url: data.url || '/notifications' },
+    })
+  )
+})
+
+// Tapping a notification opens that page, reusing the app if it's already open
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url || '/', self.location.origin).href
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const open = windows.find((w) => new URL(w.url).origin === self.location.origin)
+    if (open) {
+      await open.focus()
+      return open.navigate(url)
+    }
+    return self.clients.openWindow(url)
+  })())
+})

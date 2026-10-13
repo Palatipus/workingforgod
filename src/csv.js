@@ -4,7 +4,9 @@ import { selectAll } from './supabase'
 
 function cell(value) {
   if (value === null || value === undefined) return ''
-  const text = String(value)
+  let text = String(value)
+  // Text starting with = + - @ would be treated as a formula by Excel; numbers like -5 are fine
+  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text) && isNaN(Number(text))) text = "'" + text
   return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text
 }
 

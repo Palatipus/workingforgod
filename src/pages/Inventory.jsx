@@ -375,36 +375,33 @@ function History({ product, isAdmin, onAdjust, onClose, onChanged }) {
       {failed && <div className="mt-4"><LoadError compact onRetry={load} /></div>}
       {!rows && !failed && <div className="py-10 text-center text-sm text-slate-400">Loading...</div>}
 
+      {/* A list rather than a table so it reads well on phones */}
       {rows && (
-        <div className="mt-4 overflow-x-auto"><table className="w-full whitespace-nowrap text-sm">
-          <thead className="text-left text-xs uppercase text-slate-400">
-            <tr><th className="py-2">Date</th><th className="py-2">What</th><th className="py-2 text-right">Change</th><th className="py-2 text-right">Stock after</th><th className="py-2">By</th></tr>
-          </thead>
-          <tbody>
-            {rows.map((m) => (
-              <tr key={m.id} className="border-t border-slate-100 align-top">
-                <td className="py-2.5 pr-3 text-slate-500">{new Date(m.created_at).toLocaleDateString()}</td>
-                <td className="py-2.5 pr-3">
-                  <div className="font-medium">{movementLabels[m.kind] || m.kind}</div>
+        <div className="mt-4 divide-y divide-slate-100 text-sm">
+          {rows.map((m) => (
+            <div key={m.id} className="flex items-start justify-between gap-3 py-2.5">
+              <div className="min-w-0">
+                <div className="font-medium">
+                  {movementLabels[m.kind] || m.kind}
                   {m.orders && (
-                    <button onClick={() => navigate('/orders?order=' + m.order_id)} className="text-xs text-indigo-600 hover:underline">
+                    <button onClick={() => navigate('/orders?order=' + m.order_id)} className="ml-2 text-xs font-normal text-indigo-600 hover:underline">
                       {invoiceNumber(m.orders.order_number)}
                     </button>
                   )}
-                  {m.note && <div className="whitespace-normal text-xs text-slate-500">{m.note}</div>}
-                </td>
-                <td className={'py-2.5 pr-3 text-right font-semibold ' + (m.change > 0 ? 'text-emerald-600' : 'text-red-600')}>
-                  {m.change > 0 ? '+' + m.change : m.change}
-                </td>
-                <td className="py-2.5 pr-3 text-right">{m.balance_after}</td>
-                <td className="py-2.5 text-slate-500">{m.profiles?.full_name || '-'}</td>
-              </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr><td colSpan="5" className="py-10 text-center text-slate-400">No stock changes yet</td></tr>
-            )}
-          </tbody>
-        </table></div>
+                </div>
+                <div className="text-xs text-slate-400">
+                  {new Date(m.created_at).toLocaleString()}{m.profiles?.full_name ? ' · ' + m.profiles.full_name : ''}
+                </div>
+                {m.note && <div className="text-xs text-slate-500">{m.note}</div>}
+              </div>
+              <div className="shrink-0 text-right">
+                <div className={'font-semibold ' + (m.change > 0 ? 'text-emerald-600' : 'text-red-600')}>{m.change > 0 ? '+' + m.change : m.change}</div>
+                <div className="text-xs text-slate-400">now {m.balance_after}</div>
+              </div>
+            </div>
+          ))}
+          {rows.length === 0 && <div className="py-10 text-center text-slate-400">No stock changes yet</div>}
+        </div>
       )}
     </Modal>
   )
@@ -440,9 +437,13 @@ export default function Inventory() {
     setOwed(map)
   }
 
+  const [restoreError, setRestoreError] = useState('')
+
   async function restore(product) {
+    setRestoreError('')
     const { error } = await supabase.from('products').update({ is_active: true }).eq('id', product.id)
-    if (!error) load()
+    if (error) setRestoreError('Could not restore ' + product.name + ': ' + error.message)
+    else load()
   }
 
   useEffect(() => {
@@ -550,6 +551,7 @@ export default function Inventory() {
       </div>
 
       {loadFailed && <LoadError onRetry={load} />}
+      {restoreError && <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{restoreError}</div>}
 
       {!loadFailed && shown.length === 0 && (
         <div className="rounded-2xl border border-dashed border-slate-300 bg-white p-12 text-center text-slate-400">

@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { supabase } from './supabase'
+import { disablePush } from './push'
 
 const AuthContext = createContext(null)
 
@@ -101,6 +102,8 @@ export function AuthProvider({ children }) {
   }
 
   async function signOut() {
+    // So the next person on this phone doesn't get this person's notifications
+    await disablePush()
     await supabase.auth.signOut()
   }
 

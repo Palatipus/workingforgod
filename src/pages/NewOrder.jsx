@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
+import { company } from '../company'
 import LoadError from '../components/LoadError'
 import ReceiptActions from '../components/ReceiptActions'
 import { money, stockStatus, paymentMethods, today } from '../format'
@@ -26,6 +27,11 @@ function StepBar({ step }) {
   )
 }
 
+// Prices are money: round to 2 decimals so the app and the database always agree on totals
+function price2(value) {
+  return Math.round(Number(value) * 100) / 100
+}
+
 function validQty(value) {
   const qty = Number(value)
   return Number.isInteger(qty) && qty >= 1
@@ -35,7 +41,7 @@ function digits(phone) {
   return String(phone || '').replace(/\D/g, '').slice(-9)
 }
 
-function CustomerStep({ customers, owedBy, onPick }) {
+function CustomerStep({ customers, owedBy, creditBy, onPick }) {
   const [mode, setMode] = useState('existing')
   const [search, setSearch] = useState('')
   const [form, setForm] = useState({ name: '', phone: '', location: '' })
@@ -98,6 +104,11 @@ function CustomerStep({ customers, owedBy, onPick }) {
                 {owedBy[c.id] > 0 && (
                   <span className="shrink-0 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
                     owes {money(owedBy[c.id])}
+                  </span>
+                )}
+                {creditBy[c.id] > 0 && (
+                  <span className="shrink-0 rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+                    {money(creditBy[c.id])} credit
                   </span>
                 )}
               </button>
@@ -203,7 +214,7 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
 
   for (const line of lines) {
     const qty = Number(line.qty)
-    const price = Number(line.price)
+    const price = price2(line.price)
     const short = qty > line.product.stock_qty
     if (!validQty(line.qty) || !(price > 0)) allReady = false
     if (short && !line.ok) allReady = false
@@ -238,14 +249,15 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                 <div className="w-32 sm:w-36">
                   <label className="text-xs text-slate-500">Price (GH₵)</label>
                   <input className="input" type="number" min="0.01" step="0.01" value={line.price}
-                    onChange={(e) => onChange(line.product.id, { price: e.target.value })} />
+                    onChange={(e) => onChange(line.product.id, { price: e.target.value })}
+                    onBlur={(e) => e.target.value !== '' && onChange(line.product.id, { price: String(price2(e.target.value)) })} />
                   {line.priceHint && line.price === line.priceHint.value && (
                     <div className="mt-0.5 text-[11px] text-slate-400">{line.priceHint.label}</div>
                   )}
                 </div>
                 <div className="ml-auto text-right sm:w-32">
                   <div className="text-xs text-slate-500">Amount</div>
-                  <div className="font-bold">{money(qtyOk ? qty * Number(line.price) : 0)}</div>
+                  <div className="font-bold">{money(qtyOk ? qty * price2(line.price) : 0)}</div>
                 </div>
                 <button onClick={() => onRemove(line.product.id)} className="text-slate-300 hover:text-red-500">✕</button>
               </div>
@@ -303,20 +315,32 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
   )
 }
 
-function CheckoutModal({ customer, previousBalance, lines, total, saving, error, onClose, onSubmit }) {
+function CheckoutModal({ customer, previousBalance, credit, lines, total, saving, error, onClose, onSubmit }) {
   const [paid, setPaid] = useState('')
+  const [useCredit, setUseCredit] = useState(credit > 0)
   const [method, setMethod] = useState('cash')
-  const [dueDate, setDueDate] = useState('')
+  // Start from the business's usual credit terms (Settings), if any
+  const [dueDate, setDueDate] = useState(() => {
+    const days = Number(company.defaultDueDays)
+    if (!(days > 0)) return ''
+    const d = new Date()
+    d.setDate(d.getDate() + days)
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  })
   const [notes, setNotes] = useState('')
 
   const paidNum = Math.round(Number(paid || 0) * 100) / 100
-  const maxPaid = total + previousBalance
-  const paidOk = paidNum >= 0 && paidNum <= maxPaid + 0.001
-  // Money goes to this order first; anything above clears earlier debt
-  const onOrder = Math.min(paidNum, total)
-  const towardOld = Math.max(0, paidNum - total)
-  const balance = Math.max(0, total - onOrder)
+  const paidOk = paidNum >= 0
+  // The customer's credit pays this order first, then money paid now; anything above clears earlier debt,
+  // and whatever is left after that is kept as credit
+  const fromCredit = useCredit ? Math.min(credit, total) : 0
+  const toPay = Math.max(0, total - fromCredit)
+  const onOrder = Math.min(paidNum, toPay)
+  const towardOld = Math.min(Math.max(0, paidNum - toPay), previousBalance)
+  const keptAsCredit = Math.max(0, paidNum - onOrder - towardOld)
+  const balance = Math.max(0, toPay - onOrder)
   const prevAfter = Math.max(0, previousBalance - towardOld)
+  const maxPaid = toPay + previousBalance
   const owed = lines.filter((l) => Number(l.qty) > l.product.stock_qty)
 
   return (
@@ -336,7 +360,7 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
                 <td className="py-2">{l.product.name}{short && <span className="ml-2 text-xs">({Number(l.qty) - l.product.stock_qty} owed)</span>}</td>
                 <td className="py-2 text-center">{l.qty}</td>
                 <td className="py-2 text-right">{money(l.price)}</td>
-                <td className="py-2 text-right font-semibold">{money(Number(l.qty) * Number(l.price))}</td>
+                <td className="py-2 text-right font-semibold">{money(Number(l.qty) * price2(l.price))}</td>
               </tr>
             )
           })}
@@ -348,12 +372,22 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
         <span className="text-xl font-bold">{money(total)}</span>
       </div>
 
+      {credit > 0 && (
+        <label className="mt-5 flex items-center justify-between gap-3 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+          <span className="flex items-center gap-2">
+            <input type="checkbox" checked={useCredit} onChange={(e) => setUseCredit(e.target.checked)} />
+            Use their credit ({money(credit)} available)
+          </span>
+          {useCredit && <span className="font-semibold">- {money(fromCredit)}</span>}
+        </label>
+      )}
+
       <div className="mt-5 grid grid-cols-1 gap-3 rounded-xl bg-slate-50 p-4 sm:grid-cols-3">
         <div>
           <div className="flex items-center justify-between">
             <label className="text-xs text-slate-500">Amount paid now (GH₵)</label>
             <span className="flex gap-2">
-              <button type="button" onClick={() => setPaid(total.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
+              <button type="button" onClick={() => setPaid(toPay.toFixed(2))} className="text-xs font-medium text-indigo-600 hover:underline">
                 This order
               </button>
               {previousBalance > 0 && (
@@ -363,7 +397,7 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
               )}
             </span>
           </div>
-          <input className={'input ' + (paidOk ? '' : '!border-red-400')} type="number" min="0" step="0.01" max={maxPaid}
+          <input className={'input ' + (paidOk ? '' : '!border-red-400')} type="number" min="0" step="0.01"
             placeholder="0.00" value={paid} onChange={(e) => setPaid(e.target.value)} />
         </div>
         <div>
@@ -390,6 +424,10 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
           <div className="flex justify-between"><span className="text-slate-500">Paid toward earlier orders now</span>
             <span className="font-semibold text-emerald-600">- {money(towardOld)}</span></div>
         )}
+        {keptAsCredit > 0 && (
+          <div className="flex justify-between"><span className="text-slate-500">Extra kept as credit for future orders</span>
+            <span className="font-semibold text-indigo-700">{money(keptAsCredit)}</span></div>
+        )}
         <div className="flex justify-between border-t border-slate-200 pt-2"><span className="font-semibold">Total due after this order</span>
           <span className="font-bold">{money(balance + prevAfter)}</span></div>
       </div>
@@ -397,13 +435,18 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
       <textarea className="input mt-4" rows="2" placeholder="Note for this order (optional, printed on the invoice)"
         value={notes} onChange={(e) => setNotes(e.target.value)} />
 
-      {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid can be at most {money(maxPaid)} (this order plus what they owe).</div>}
+      {!paidOk && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">Amount paid cannot be negative.</div>}
+      {keptAsCredit > 0 && (
+        <div className="mt-4 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-900">
+          {money(paidNum)} is more than this order and what they owe. Check the amount; the extra {money(keptAsCredit)} will be kept as credit.
+        </div>
+      )}
       {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
 
       <div className="mt-6 flex justify-end gap-3">
         <button onClick={onClose} className="btn-ghost">Go back</button>
         <button disabled={saving || !paidOk}
-          onClick={() => onSubmit({ paid: paidNum, method, dueDate: balance > 0.005 && dueDate ? dueDate : null, notes: notes.trim() || null })}
+          onClick={() => onSubmit({ paid: paidNum, method, dueDate: balance > 0.005 && dueDate ? dueDate : null, notes: notes.trim() || null, useCredit: useCredit && credit > 0 })}
           className="btn">
           {saving ? 'Creating...' : 'Confirm and create invoice'}
         </button>
@@ -412,11 +455,28 @@ function CheckoutModal({ customer, previousBalance, lines, total, saving, error,
   )
 }
 
+// An unfinished order is kept on this device, so a phone call or closed tab doesn't lose it
+function draftKey(userId) {
+  return 'wfg-order-draft-' + userId
+}
+
+function readDraft(userId) {
+  try { return JSON.parse(localStorage.getItem(draftKey(userId)) || 'null') } catch { return null }
+}
+
+function clearDraft(userId) {
+  try { localStorage.removeItem(draftKey(userId)) } catch { /* storage blocked */ }
+}
+
 export default function NewOrder() {
   const { profile } = useAuth()
+  const [params] = useSearchParams()
+  const started = useRef(false)
+  const [restoredAt, setRestoredAt] = useState(null)
   const [step, setStep] = useState(1)
   const [customers, setCustomers] = useState([])
   const [owedBy, setOwedBy] = useState({})
+  const [creditBy, setCreditBy] = useState({})
   const [products, setProducts] = useState([])
   const [customer, setCustomer] = useState(null)
   const [lines, setLines] = useState([])
@@ -433,7 +493,7 @@ export default function NewOrder() {
     const [c, p, b, o] = await Promise.all([
       selectAll(() => supabase.from('customers').select('*').order('name').order('id')),
       selectAll(() => supabase.from('products').select('*').eq('is_active', true).order('name').order('id')),
-      selectAll(() => supabase.from('customer_balances').select('customer_id, owed').gt('owed', 0).order('customer_id')),
+      selectAll(() => supabase.from('customer_balances').select('customer_id, owed, credit').or('owed.gt.0,credit.gt.0').order('customer_id')),
       selectAll(() => supabase.from('product_owed').select('product_id, owed_qty').order('product_id')),
     ])
     if (c.error || p.error || b.error) {
@@ -443,13 +503,65 @@ export default function NewOrder() {
     setCustomers(c.data || [])
     const owedQty = {}
     for (const row of o.data || []) owedQty[row.product_id] = row.owed_qty
-    setProducts((p.data || []).map((prod) => ({ ...prod, owed_qty: owedQty[prod.id] || 0 })))
+    const prods = (p.data || []).map((prod) => ({ ...prod, owed_qty: owedQty[prod.id] || 0 }))
+    setProducts(prods)
     const owed = {}
-    for (const row of b.data || []) owed[row.customer_id] = Number(row.owed)
+    const credit = {}
+    for (const row of b.data || []) {
+      if (Number(row.owed) > 0) owed[row.customer_id] = Number(row.owed)
+      if (Number(row.credit) > 0) credit[row.customer_id] = Number(row.credit)
+    }
     setOwedBy(owed)
+    setCreditBy(credit)
+
+    // First load only: start for a customer chosen elsewhere (?customer=), or pick up an unfinished order
+    if (started.current) return
+    started.current = true
+    const wanted = params.get('customer')
+    const draft = readDraft(profile.id)
+    if (wanted) {
+      const found = (c.data || []).find((x) => x.id === wanted)
+      if (found) {
+        setCustomer(found)
+        setStep(2)
+        if (draft?.customerId !== wanted) clearDraft(profile.id)
+        else restore(draft, found, prods)
+      }
+      return
+    }
+    if (draft) {
+      const found = (c.data || []).find((x) => x.id === draft.customerId)
+      if (found) restore(draft, found, prods)
+      else clearDraft(profile.id)
+    }
+  }
+
+  function restore(draft, found, prods) {
+    const restoredLines = (draft.lines || [])
+      .map((l) => ({ ...l, product: prods.find((p) => p.id === l.productId) }))
+      .filter((l) => l.product)
+      .map(({ productId, ...l }) => ({ ...l, ok: false }))
+    setCustomer(found)
+    setLines(restoredLines)
+    setStep(restoredLines.length > 0 ? Math.min(draft.step || 2, 3) : 2)
+    setRestoredAt(draft.savedAt)
   }
 
   useEffect(() => { loadData(); loadPdf() }, [])
+
+  // Keep the unfinished order on this device
+  useEffect(() => {
+    if (!started.current || done) return
+    if (!customer) return
+    try {
+      localStorage.setItem(draftKey(profile.id), JSON.stringify({
+        customerId: customer.id,
+        step,
+        savedAt: new Date().toISOString(),
+        lines: lines.map((l) => ({ productId: l.product.id, qty: l.qty, price: l.price, priceHint: l.priceHint })),
+      }))
+    } catch { /* storage full or blocked: the order still works, it just isn't kept */ }
+  }, [customer, lines, step, done])
 
   // Last price used for each product, preferring this customer's last price
   useEffect(() => {
@@ -482,11 +594,14 @@ export default function NewOrder() {
     if (rest.length === 0) setStep(2)
   }
 
-  async function submit({ paid, method, dueDate, notes }) {
+  async function submit({ paid, method, dueDate, notes, useCredit }) {
     setSaving(true)
     setError('')
+    // What we expect to be owed, from the stock shown on screen, to spot stock that changed meanwhile
+    const expectedOwed = {}
+    for (const l of lines) expectedOwed[l.product.id] = Math.max(0, Number(l.qty) - l.product.stock_qty)
 
-    const items = lines.map((l) => ({ product_id: l.product.id, qty: Number(l.qty), price: Number(l.price) }))
+    const items = lines.map((l) => ({ product_id: l.product.id, qty: Number(l.qty), price: price2(l.price) }))
     const { data: orderId, error } = await supabase.rpc('create_order', {
       p_customer_id: customer.id,
       p_items: items,
@@ -494,6 +609,7 @@ export default function NewOrder() {
       p_method: method,
       p_due_date: dueDate,
       p_notes: notes,
+      p_use_credit: !!useCredit,
     })
     if (error) {
       setError(error.message)
@@ -503,19 +619,33 @@ export default function NewOrder() {
 
     // Build the invoice from what was actually saved (stock may have changed since this page loaded)
     const { data: order } = await supabase.from('orders')
-      .select('order_number, created_at, previous_balance, due_date, notes, order_items(qty, price, pending_qty, product_name, products(name)), payments(receipt_id)')
+      .select('order_number, created_at, previous_balance, due_date, notes, order_items(product_id, qty, price, pending_qty, product_name, products(name)), payments(amount, note, receipt_id)')
       .eq('id', orderId).single()
-    let saved = 0
-    for (const item of order.order_items) saved += item.qty * Number(item.price)
+    // Money now on this order: cash received today plus any credit used
+    let onOrder = 0
+    let cashOnOrder = 0
+    let fromCredit = 0
+    let receiptId = null
+    for (const p of order.payments) {
+      onOrder += Number(p.amount)
+      if (p.note === 'From customer credit') fromCredit += Number(p.amount)
+      else { cashOnOrder += Number(p.amount); receiptId = p.receipt_id }
+    }
+    const stockChanged = order.order_items
+      .filter((i) => i.pending_qty > (expectedOwed[i.product_id] || 0))
+      .map((i) => ({ name: i.product_name || i.products.name, extra: i.pending_qty - (expectedOwed[i.product_id] || 0) }))
     const invoice = {
-      receiptId: order.payments[0]?.receipt_id || null,
-      paidTowardOld: Math.max(0, paid - saved),
+      receiptId,
+      cashPaid: paid,
+      fromCredit,
+      paidBeyondOrder: Math.max(0, paid - cashOnOrder),
+      stockChanged,
       invoiceNumber: invoiceNumber(order.order_number),
       date: order.created_at,
       dueDate: order.due_date,
       customer,
       salesperson: profile.full_name,
-      paid: Math.min(paid, saved),
+      paid: onOrder,
       previousBalance: Number(order.previous_balance),
       notes: order.notes,
       items: order.order_items.map((item) => ({
@@ -525,6 +655,7 @@ export default function NewOrder() {
         pending_qty: item.pending_qty,
       })),
     }
+    clearDraft(profile.id)
     downloadInvoice(invoice)
     setDone(invoice)
     setConfirmOpen(false)
@@ -532,6 +663,8 @@ export default function NewOrder() {
   }
 
   function reset() {
+    clearDraft(profile.id)
+    setRestoredAt(null)
     setStep(1)
     setCustomer(null)
     setLines([])
@@ -547,8 +680,21 @@ export default function NewOrder() {
         <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-50 text-2xl text-emerald-600">✓</div>
         <h1 className="mt-5 text-xl font-bold">Invoice {done.invoiceNumber} created</h1>
         <p className="mt-1 text-sm text-slate-500">{done.customer.name} · {money(t.subtotal)} · paid {money(t.paid)}</p>
-        {done.paidTowardOld > 0 && (
-          <p className="mt-1 text-sm text-emerald-700">Plus {money(done.paidTowardOld)} paid toward earlier orders</p>
+        {done.fromCredit > 0 && (
+          <p className="mt-1 text-sm text-indigo-700">{money(done.fromCredit)} of that came from their credit</p>
+        )}
+        {done.paidBeyondOrder > 0 && (
+          <p className="mt-1 text-sm text-emerald-700">Plus {money(done.paidBeyondOrder)} toward earlier invoices or kept as credit (see the receipt)</p>
+        )}
+        {done.stockChanged.length > 0 && (
+          <div className="mt-4 rounded-xl bg-amber-50 px-4 py-3 text-left text-sm text-amber-900">
+            <div className="font-semibold">Stock changed while you were ordering</div>
+            Someone else sold some of these at the same time, so these will be delivered later:
+            <ul className="mt-1 list-disc pl-5">
+              {done.stockChanged.map((c) => <li key={c.name}>{c.extra} x {c.name}</li>)}
+            </ul>
+            It's marked on the invoice. Let the customer know.
+          </div>
         )}
         {t.totalDue > 0.005 && (
           <p className="mt-1 text-sm font-medium text-red-600">Customer now owes {money(t.totalDue)}</p>
@@ -565,7 +711,7 @@ export default function NewOrder() {
         {shareNote && <p className="mt-4 text-sm text-slate-500">{shareNote}</p>}
         {done.receiptId && (
           <div className="mt-6 rounded-xl bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-            <div className="font-medium">Receipt for the {money(t.paid + done.paidTowardOld)} received</div>
+            <div className="font-medium">Receipt for the {money(done.cashPaid)} received</div>
             <ReceiptActions receiptId={done.receiptId} className="mt-1 block" />
           </div>
         )}
@@ -574,7 +720,7 @@ export default function NewOrder() {
   }
 
   let total = 0
-  for (const l of lines) total += Number(l.qty) * Number(l.price)
+  for (const l of lines) total += Number(l.qty) * price2(l.price)
 
   return (
     <div className="space-y-6">
@@ -593,7 +739,14 @@ export default function NewOrder() {
 
       {loadFailed && <LoadError onRetry={loadData} />}
 
-      {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
+      {restoredAt && customer && (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
+          <span>Continuing your unfinished order for <b>{customer.name}</b> from {new Date(restoredAt).toLocaleString()}.</span>
+          <button onClick={reset} className="font-medium text-indigo-700 hover:underline">Start over</button>
+        </div>
+      )}
+
+      {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} creditBy={creditBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
 
       {step === 2 && (
         <ItemsStep products={products} selectedIds={lines.map((l) => l.product.id)}
@@ -606,7 +759,7 @@ export default function NewOrder() {
       )}
 
       {confirmOpen && (
-        <CheckoutModal customer={customer} previousBalance={owedBy[customer.id] || 0} lines={lines} total={total}
+        <CheckoutModal customer={customer} previousBalance={owedBy[customer.id] || 0} credit={creditBy[customer.id] || 0} lines={lines} total={total}
           saving={saving} error={error} onClose={() => setConfirmOpen(false)} onSubmit={submit} />
       )}
     </div>

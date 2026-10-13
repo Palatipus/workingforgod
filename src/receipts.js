@@ -6,7 +6,7 @@ import { invoiceNumber } from './invoice'
 export async function fetchReceipt(id) {
   const { data, error } = await supabase
     .from('receipts')
-    .select('id, receipt_number, created_at, amount, method, note, balance_after, reversed_at, reversed_lines, customers(name, phone, location), receiver:profiles!receipts_created_by_fkey(full_name), payments(amount, orders(order_number))')
+    .select('id, receipt_number, created_at, amount, method, note, balance_after, credit_after, reversed_at, reversed_lines, customers(name, phone, location), receiver:profiles!receipts_created_by_fkey(full_name), payments(amount, orders(order_number))')
     .eq('id', id)
     .single()
   if (error) throw error
@@ -19,6 +19,7 @@ export async function fetchReceipt(id) {
     note: data.note,
     receivedBy: data.receiver?.full_name || '',
     balanceAfter: data.balance_after === null ? null : Number(data.balance_after),
+    creditAfter: data.credit_after === null ? 0 : Number(data.credit_after),
     reversed: !!data.reversed_at,
     // A reversed receipt's payments are gone; its breakdown was saved in reversed_lines
     allocations: (data.reversed_at

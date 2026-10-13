@@ -132,16 +132,25 @@ function RecentOrders({ title = 'Recent orders' }) {
 function PendingSignups({ onChanged }) {
   const [people, setPeople] = useState([])
   const [confirming, setConfirming] = useState(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
 
   async function load() {
-    const { data } = await supabase.from('profiles').select('id, full_name, username, created_at').eq('status', 'pending')
-    setPeople(data || [])
+    const { data, error } = await supabase.from('profiles').select('id, full_name, username, created_at').eq('status', 'pending')
+    if (!error) setPeople(data || [])
   }
 
   useEffect(() => { load() }, [])
 
   async function confirmDecision() {
-    await supabase.rpc('set_user_status', { p_user: confirming.person.id, p_status: confirming.action })
+    setBusy(true)
+    setError('')
+    const { error } = await supabase.rpc('set_user_status', { p_user: confirming.person.id, p_status: confirming.action })
+    setBusy(false)
+    if (error) {
+      setError(error.message)
+      return
+    }
     setConfirming(null)
     await load()
     onChanged()
@@ -186,12 +195,13 @@ function PendingSignups({ onChanged }) {
                 ? 'They will get full access as a salesperson.'
                 : 'They will not be able to use the system.'}
             </p>
+            {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
             <div className="mt-6 flex justify-end gap-3">
-              <button onClick={() => setConfirming(null)}
+              <button onClick={() => { setConfirming(null); setError('') }}
                 className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-medium text-slate-600">
                 Cancel
               </button>
-              <button onClick={confirmDecision}
+              <button onClick={confirmDecision} disabled={busy}
                 className={'rounded-lg px-4 py-2 text-sm font-semibold text-white ' +
                   (confirming.action === 'approved' ? 'bg-emerald-600' : 'bg-red-600')}>
                 Yes, {confirming.action === 'approved' ? 'approve' : 'reject'}
@@ -268,7 +278,7 @@ function AdminDashboard() {
       <div className="card max-w-lg p-6 text-sm">
         <div className="font-semibold text-red-600">The dashboard could not load</div>
         <p className="mt-2 text-slate-600">{loadError}</p>
-        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_11.sql) ran and that this account is an admin.</p>
+        <p className="mt-2 text-slate-400">Check that every SQL file (schema.sql, then schema_update.sql to schema_update_12.sql) ran and that this account is an admin.</p>
       </div>
     )
   }
@@ -305,6 +315,7 @@ function AdminDashboard() {
           value={stats.low_stock_count + stats.out_of_stock_count} alert={stats.out_of_stock_count > 0} />
         <StatCard label="Owed by customers" icon="users" tone="red"
           note={(stats.customers_owing || 0) + ' customer' + (stats.customers_owing === 1 ? '' : 's') + ' owing' +
+            (stats.customer_credit > 0 ? ' · ' + money(stats.customer_credit) + ' credit held' : '') +
             (stats.overdue_amount > 0 ? ' · ' + money(stats.overdue_amount) + ' overdue' : '')}
           value={money(stats.outstanding_debt)} alert={stats.outstanding_debt > 0} />
       </div>
