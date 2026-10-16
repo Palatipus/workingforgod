@@ -61,6 +61,10 @@ jobs:
           psql "$DB_URL" -At -c "select 'orders', count(*) from orders union all select 'customers', count(*) from customers
             union all select 'products', count(*) from products union all select 'receipts', count(*) from receipts" > "$work/counts.txt"
 
+          # Newer pg_dump adds \restrict lines that psql older than 17.6 rejects; these are our own files
+          sed -i '/^\\restrict /d; /^\\unrestrict /d' "$work"/*.sql
+          # New Supabase projects already have these, and restoring them needs a role we don't get
+          sed -i '/^ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin /d' "$work/schema.sql"
           mkdir -p daily monthly
           tar -czf "daily/$day.tar.gz" -C "$work" schema.sql auth.sql data.sql counts.txt
           month=$(date -u +%Y-%m)
