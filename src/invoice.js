@@ -107,7 +107,7 @@ function drawHeader(doc, logoData, title, rightLines) {
   rightLines.forEach((line, i) => doc.text(line, W - M, 26 + i * 5, { align: 'right' }))
 }
 
-function drawFooter(doc) {
+function drawFooter(doc, text = 'Thank you for your business.') {
   const pages = doc.internal.getNumberOfPages()
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i)
@@ -116,7 +116,7 @@ function drawFooter(doc) {
     doc.setFont('helvetica', 'normal')
     doc.setFontSize(7.5)
     doc.setTextColor(...MUTED)
-    doc.text('Thank you for your business.   ' + company.name + '   |   ' + company.phone, M, 290)
+    doc.text(text + '   ' + company.name + '   |   ' + company.phone, M, 290)
     doc.text('Page ' + i + ' of ' + pages, W - M, 290, { align: 'right' })
   }
 }
@@ -758,4 +758,109 @@ export function shareNotice(result) {
   if (result === 'downloaded-copied') return 'Sharing is not available in this browser. The PDF was downloaded and a summary was copied, so you can paste it anywhere.'
   if (result === 'downloaded') return 'Sharing is not available in this browser. The PDF was downloaded so you can send it.'
   return ''
+}
+
+// LOW STOCK (purchase list) ----------------------------------------------
+// data: { category: 'all' | 'reagent' | 'consumable' | 'equipment', date,
+//         rows: [{ name, brand, category, stock, reorder, owed }] }
+
+const categoryNames = { all: 'All categories', reagent: 'Reagents', consumable: 'Consumables', equipment: 'Equipment' }
+
+export function lowStockNeed(row) {
+  return row.owed + Math.max(0, row.reorder - row.stock)
+}
+
+function lowStockName(data) {
+  return 'Low-stock-' + (categoryNames[data.category] || data.category).replace(/\s+/g, '-') + '-' + new Date(data.date).toISOString().slice(0, 10)
+}
+
+export function buildLowStock(data, { jsPDF, autoTable, logoData }) {
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const all = data.category === 'all'
+  const out = data.rows.filter((r) => r.stock === 0).length
+  const owed = data.rows.filter((r) => r.owed > 0).length
+
+  drawHeader(doc, logoData, 'LOW STOCK', [
+    categoryNames[data.category] || data.category,
+    'Date: ' + shortDate(data.date),
+    data.rows.length + ' product' + (data.rows.length === 1 ? '' : 's'),
+  ])
+
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(...MUTED)
+  doc.text(out + ' out of stock   |   ' + owed + ' owed to customers   |   Need = owed to customers + what it takes to get back to the reorder level', M, 54)
+
+  const rows = data.rows.map((r, i) => [
+    i + 1,
+    r.brand ? r.name + '\n' + r.brand : r.name,
+    ...(all ? [categoryNames[r.category] ? categoryNames[r.category].replace(/s$/, '') : r.category] : []),
+    r.stock === 0 ? 'Out' : r.stock,
+    r.reorder,
+    r.owed || '-',
+    lowStockNeed(r) || '-',
+    '',
+  ])
+  const head = ['#', 'Product', ...(all ? ['Category'] : []), 'In stock', 'Reorder at', 'Owed', 'Need', 'Order qty']
+  const stockCol = all ? 3 : 2
+
+  autoTable(doc, {
+    startY: 60,
+    head: [head],
+    body: rows,
+    margin: { left: M, right: M },
+    theme: 'plain',
+    styles: { fontSize: 9, cellPadding: { top: 3, bottom: 3, left: 3, right: 3 }, textColor: TEXT, lineColor: LINE, lineWidth: { bottom: 0.2 }, halign: 'center' },
+    headStyles: { fillColor: NAVY, textColor: [255, 255, 255], fontStyle: 'bold', fontSize: 8.5, lineWidth: 0 },
+    alternateRowStyles: { fillColor: [250, 252, 254] },
+    columnStyles: {
+      0: { cellWidth: 10 },
+      1: { halign: 'left' },
+      ...(all ? { 2: { cellWidth: 26 } } : {}),
+      [stockCol]: { cellWidth: 18 },
+      [stockCol + 1]: { cellWidth: 24 },
+      [stockCol + 2]: { cellWidth: 16 },
+      [stockCol + 3]: { cellWidth: 16, fontStyle: 'bold' },
+      [stockCol + 4]: { cellWidth: 22, lineWidth: { bottom: 0.3 }, lineColor: MUTED },
+    },
+    didParseCell: (hook) => {
+      if (hook.section === 'head') hook.cell.styles.halign = hook.column.index === 1 ? 'left' : 'center'
+      if (hook.section === 'body' && hook.column.index === stockCol && hook.cell.raw === 'Out') {
+        hook.cell.styles.textColor = RED
+        hook.cell.styles.fontStyle = 'bold'
+      }
+      if (hook.section === 'body' && hook.column.index === stockCol + 2 && hook.cell.raw !== '-') {
+        hook.cell.styles.textColor = RED
+      }
+    },
+  })
+
+  drawFooter(doc, 'Purchase list.')
+  return doc
+}
+
+export async function lowStockFile(data) {
+  const blob = buildLowStock(data, await loadPdf()).output('blob')
+  return new File([blob], lowStockName(data) + '.pdf', { type: 'application/pdf' })
+}
+
+export async function downloadLowStock(data) {
+  buildLowStock(data, await loadPdf()).save(lowStockName(data) + '.pdf')
+}
+
+// Shows the PDF in a tab opened beforehand (browsers block tabs opened after a wait). Downloads it if there is no tab.
+export async function viewLowStock(data, tab) {
+  const file = await lowStockFile(data)
+  if (!tab) {
+    downloadLowStock(data)
+    return
+  }
+  tab.location.href = URL.createObjectURL(file)
+}
+
+export async function shareLowStock(data) {
+  const file = await lowStockFile(data)
+  const text = 'Low stock (' + (categoryNames[data.category] || data.category) + ') - ' + data.rows.length + ' products\n' +
+    data.rows.map((r) => '- ' + r.name + ': ' + r.stock + ' left' + (r.owed ? ', ' + r.owed + ' owed' : '')).join('\n')
+  return sharePdf(file, lowStockName(data), text, () => downloadLowStock(data))
 }

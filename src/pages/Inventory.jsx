@@ -6,7 +6,7 @@ import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
 import DeliverDialog from '../components/DeliverDialog'
 import { stockStatus, adjustReasons, movementLabels } from '../format'
-import { invoiceNumber } from '../invoice'
+import { invoiceNumber, viewLowStock, downloadLowStock, shareLowStock, lowStockNeed, shareNotice } from '../invoice'
 import { shrinkImage } from '../image'
 
 const filters = [
@@ -407,6 +407,81 @@ function History({ product, isAdmin, onAdjust, onClose, onChanged }) {
   )
 }
 
+const lowStockCategories = [
+  ['all', 'All'],
+  ['reagent', 'Reagents'],
+  ['consumable', 'Consumables'],
+  ['equipment', 'Equipment'],
+]
+
+// Purchase list: products at or below their reorder level, or owed to customers
+function LowStockDialog({ products, owed, onClose }) {
+  const [category, setCategory] = useState('all')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+
+  const low = products
+    .filter((p) => p.stock_qty <= p.reorder_level || owed[p.id])
+    .map((p) => ({ name: p.name, brand: p.brand, category: p.category, stock: p.stock_qty, reorder: p.reorder_level, owed: owed[p.id]?.owed_qty || 0 }))
+    .sort((a, b) => a.category.localeCompare(b.category) || a.name.localeCompare(b.name))
+  const rows = low.filter((r) => category === 'all' || r.category === category)
+  const data = { category, date: new Date(), rows }
+
+  async function run(action) {
+    setBusy(true)
+    setNote('')
+    // Open the tab right away: browsers block tabs opened after a wait
+    const tab = action === 'view' ? window.open('', '_blank') : null
+    try {
+      if (action === 'view') await viewLowStock(data, tab)
+      else if (action === 'share') setNote(shareNotice(await shareLowStock(data)))
+      else await downloadLowStock(data)
+    } catch {
+      if (tab) tab.close()
+      setNote('Could not make the PDF. Check your connection and try again.')
+    }
+    setBusy(false)
+  }
+
+  return (
+    <Modal title="Low stock list" onClose={onClose}>
+      <p className="text-sm text-slate-600">Products at or below their reorder level, or owed to customers, as a PDF to buy from.</p>
+      <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {lowStockCategories.map(([key, label]) => {
+          const n = low.filter((r) => key === 'all' || r.category === key).length
+          return (
+            <button key={key} onClick={() => setCategory(key)}
+              className={'rounded-xl border px-3 py-2 text-left text-sm ' +
+                (category === key ? 'border-indigo-600 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50')}>
+              <div className="font-medium">{label}</div>
+              <div className="text-xs opacity-75">{n} product{n === 1 ? '' : 's'}</div>
+            </button>
+          )
+        })}
+      </div>
+
+      <div className="mt-4 max-h-56 divide-y divide-slate-100 overflow-y-auto rounded-lg border border-slate-200 text-sm">
+        {rows.map((r) => (
+          <div key={r.name + r.category} className="flex items-center justify-between gap-3 px-3 py-2">
+            <span className="truncate">{r.name}</span>
+            <span className={'shrink-0 text-xs ' + (r.stock === 0 ? 'font-semibold text-red-600' : 'text-slate-500')}>
+              {r.stock === 0 ? 'Out' : r.stock + ' left'}{r.owed > 0 && ' · ' + r.owed + ' owed'} · need {lowStockNeed(r)}
+            </span>
+          </div>
+        ))}
+        {rows.length === 0 && <div className="px-3 py-6 text-center text-slate-400">Nothing low in this category</div>}
+      </div>
+
+      {note && <p className="mt-3 text-sm text-slate-500">{note}</p>}
+      <div className="mt-6 flex flex-wrap justify-end gap-3">
+        <button disabled={busy || rows.length === 0} onClick={() => run('share')} className="btn-ghost">Share</button>
+        <button disabled={busy || rows.length === 0} onClick={() => run('download')} className="btn-ghost">Download</button>
+        <button disabled={busy || rows.length === 0} onClick={() => run('view')} className="btn">{busy ? 'Making PDF...' : 'View PDF'}</button>
+      </div>
+    </Modal>
+  )
+}
+
 export default function Inventory() {
   const [all, setAll] = useState([])
   const [search, setSearch] = useState('')
@@ -415,6 +490,7 @@ export default function Inventory() {
   const [stocking, setStocking] = useState(null)
   const [adjusting, setAdjusting] = useState(null)
   const [loadFailed, setLoadFailed] = useState(false)
+  const [lowOpen, setLowOpen] = useState(false)
   const [params, setParams] = useSearchParams()
   const { profile } = useAuth()
   const isAdmin = profile.role === 'admin'
@@ -490,7 +566,10 @@ export default function Inventory() {
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Inventory</h1>
           <p className="text-sm text-slate-500">{products.length} products</p>
         </div>
-        <button onClick={() => setEditing('new')} className="btn">+ Add product</button>
+        <div className="flex flex-wrap justify-end gap-2">
+          <button onClick={() => setLowOpen(true)} className="btn-ghost">Low stock PDF</button>
+          <button onClick={() => setEditing('new')} className="btn">+ Add product</button>
+        </div>
       </div>
 
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
@@ -512,16 +591,14 @@ export default function Inventory() {
           const status = stockStatus(p)
           return (
             <div key={p.id} className="overflow-hidden card transition hover:shadow-md">
-              <div className="flex h-36 items-center justify-center bg-white p-4 md:h-48">
+              <div className="relative flex h-36 items-center justify-center bg-white p-4 md:h-48">
                 {p.image_url
                   ? <img src={p.image_url} alt={p.name} className="h-full w-full object-contain" />
                   : <span className="text-4xl text-slate-200">▢</span>}
+                <span className={'absolute left-2 top-2 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium shadow-sm ' + status.cls}>{status.label}</span>
               </div>
               <div className="border-t border-slate-100 p-4">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="font-semibold leading-snug">{p.name}</div>
-                  <span className={'shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ' + status.cls}>{status.label}</span>
-                </div>
+                <div className="break-words font-semibold leading-snug">{p.name}</div>
                 <div className="mt-1 text-xs capitalize text-slate-400">
                   {p.brand ? p.brand + ' · ' : ''}{p.category}
                 </div>
@@ -567,6 +644,7 @@ export default function Inventory() {
         <History product={historyProduct} isAdmin={isAdmin} onClose={() => showHistory(null)} onChanged={load}
           onAdjust={() => setAdjusting(historyProduct)} />
       )}
+      {lowOpen && <LowStockDialog products={products} owed={owed} onClose={() => setLowOpen(false)} />}
       {adjusting && <AdjustForm product={adjusting} onClose={() => setAdjusting(null)} onSaved={saved} />}
     </div>
   )

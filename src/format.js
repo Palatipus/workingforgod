@@ -63,6 +63,8 @@ export const movementLabels = {
   delivery: 'Delivered (owed item)',
   cancel: 'Order cancelled',
   adjustment: 'Adjustment',
+  hold: 'Held for pending order',
+  release: 'Released from pending order',
 }
 
 export function refundNumber(n) {

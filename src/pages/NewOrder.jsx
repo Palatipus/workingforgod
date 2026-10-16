@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
@@ -35,6 +35,36 @@ function price2(value) {
 function validQty(value) {
   const qty = Number(value)
   return Number.isInteger(qty) && qty >= 1
+}
+
+// A line is a product, or an extra charge (service fee, delivery, ...) with its own description
+function lineName(line) {
+  return line.product ? line.product.name : line.name
+}
+
+let extraCount = 0
+function extraKey() {
+  extraCount += 1
+  return 'extra-' + Date.now().toString(36) + '-' + extraCount
+}
+
+function lineState(line) {
+  const qtyOk = validQty(line.qty)
+  const priceBlank = String(line.price ?? '').trim() === ''
+  const priceOk = !priceBlank && price2(line.price) > 0
+  const nameOk = !!line.product || String(line.name || '').trim() !== ''
+  const short = !!line.product && qtyOk && Number(line.qty) > line.product.stock_qty
+  return { qtyOk, priceBlank, priceOk, nameOk, short }
+}
+
+// Lines as the database expects them
+function orderLines(lines) {
+  return lines.map((l) => ({
+    product_id: l.product ? l.product.id : null,
+    name: l.product ? null : l.name.trim(),
+    qty: Number(l.qty),
+    price: String(l.price ?? '').trim() === '' ? null : price2(l.price),
+  }))
 }
 
 function digits(phone) {
@@ -158,7 +188,7 @@ function CustomerStep({ customers, owedBy, creditBy, onPick }) {
   )
 }
 
-function ItemsStep({ products, selectedIds, onToggle, onBack, onNext }) {
+function ItemsStep({ products, selectedIds, count, onToggle, onAddExtra, onBack, onNext }) {
   const [search, setSearch] = useState('')
   const shown = products.filter((p) => (p.name + ' ' + (p.brand || '')).toLowerCase().includes(search.toLowerCase()))
 
@@ -167,10 +197,11 @@ function ItemsStep({ products, selectedIds, onToggle, onBack, onNext }) {
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <input className="input md:max-w-sm" placeholder="Search products" value={search}
           onChange={(e) => setSearch(e.target.value)} />
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <button onClick={onBack} className="btn-ghost">Back</button>
-          <button disabled={selectedIds.length === 0} onClick={onNext} className="btn">
-            Review {selectedIds.length} item{selectedIds.length === 1 ? '' : 's'}
+          {count === 0 && <button onClick={onAddExtra} className="btn-ghost">Service only (no products)</button>}
+          <button disabled={count === 0} onClick={onNext} className="btn">
+            Review {count} item{count === 1 ? '' : 's'}
           </button>
         </div>
       </div>
@@ -208,29 +239,80 @@ function ItemsStep({ products, selectedIds, onToggle, onBack, onNext }) {
   )
 }
 
-function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
-  let allReady = lines.length > 0
+function QtyPriceAmount({ line, onChange, onRemove }) {
+  const { qtyOk, priceBlank } = lineState(line)
+  const qty = Number(line.qty)
+  return (
+    <>
+      <div className="w-24 sm:w-28">
+        <label className="text-xs text-slate-500">Quantity</label>
+        <input className={'input ' + (qtyOk ? '' : '!border-red-400')} type="number" min="1" step="1" value={line.qty}
+          onChange={(e) => onChange(line.key, { qty: e.target.value, ok: false })} />
+      </div>
+      <div className="w-32 sm:w-36">
+        <label className="text-xs text-slate-500">Price (GH₵)</label>
+        <input className={'input ' + (priceBlank ? '!border-amber-400 !bg-amber-50/50' : '')} type="number" min="0.01" step="0.01"
+          placeholder="Not known yet" value={line.price}
+          onChange={(e) => onChange(line.key, { price: e.target.value })}
+          onBlur={(e) => e.target.value !== '' && onChange(line.key, { price: String(price2(e.target.value)) })} />
+        {line.priceHint && line.price === line.priceHint.value && (
+          <div className="mt-0.5 text-[11px] text-slate-400">{line.priceHint.label}</div>
+        )}
+      </div>
+      <div className="ml-auto text-right sm:w-32">
+        <div className="text-xs text-slate-500">Amount</div>
+        <div className="font-bold">{priceBlank ? <span className="text-amber-700">Price needed</span> : money(qtyOk ? qty * price2(line.price) : 0)}</div>
+      </div>
+      <button onClick={() => onRemove(line.key)} aria-label="Remove" className="text-slate-300 hover:text-red-500">✕</button>
+    </>
+  )
+}
+
+function ExtraLine({ line, onChange, onRemove }) {
+  const { qtyOk, nameOk } = lineState(line)
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border border-dashed border-slate-200 text-xl text-slate-300">+</div>
+        <div className="min-w-[10rem] flex-1">
+          <label className="text-xs text-slate-500">Extra charge</label>
+          <input className={'input ' + (nameOk ? '' : '!border-red-400')} placeholder="e.g. Service fee, Delivery, Installation"
+            value={line.name} onChange={(e) => onChange(line.key, { name: e.target.value })} />
+        </div>
+        <QtyPriceAmount line={line} onChange={onChange} onRemove={onRemove} />
+      </div>
+      {!qtyOk && line.qty !== '' && (
+        <div className="mt-2 text-sm text-red-600">Quantity must be a whole number of at least 1.</div>
+      )}
+      {!nameOk && <div className="mt-2 text-sm text-red-600">Describe what this charge is for. It is printed on the invoice.</div>}
+    </div>
+  )
+}
+
+function ReviewStep({ lines, isPending, onChange, onRemove, onAddExtra, onBack, onCheckout, onSavePending }) {
+  let canSave = lines.length > 0
+  let missing = 0
   let total = 0
 
   for (const line of lines) {
-    const qty = Number(line.qty)
-    const price = price2(line.price)
-    const short = qty > line.product.stock_qty
-    if (!validQty(line.qty) || !(price > 0)) allReady = false
-    if (short && !line.ok) allReady = false
-    total += qty * price
+    const s = lineState(line)
+    if (!s.qtyOk || !s.nameOk || (!s.priceBlank && !s.priceOk)) canSave = false
+    if (s.short && !line.ok) canSave = false
+    if (s.priceBlank) missing += 1
+    else if (s.qtyOk) total += Number(line.qty) * price2(line.price)
   }
+  const canCheckout = canSave && missing === 0
 
   return (
     <div className="space-y-4">
       <div className="space-y-3">
         {lines.map((line) => {
+          if (!line.product) return <ExtraLine key={line.key} line={line} onChange={onChange} onRemove={onRemove} />
           const qty = Number(line.qty)
           const stock = line.product.stock_qty
-          const qtyOk = validQty(line.qty)
-          const short = qtyOk && qty > stock
+          const { qtyOk, short } = lineState(line)
           return (
-            <div key={line.product.id}
+            <div key={line.key}
               className={'rounded-2xl border bg-white p-4 shadow-sm ' +
                 (short && line.ok ? 'border-red-300 bg-red-50/40' : 'border-slate-200')}>
               <div className="flex flex-wrap items-center gap-3">
@@ -241,25 +323,7 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                   <div className="truncate font-semibold">{line.product.name}</div>
                   <div className="text-xs text-slate-400">{stock} in stock</div>
                 </div>
-                <div className="w-24 sm:w-28">
-                  <label className="text-xs text-slate-500">Quantity</label>
-                  <input className={'input ' + (qtyOk ? '' : '!border-red-400')} type="number" min="1" step="1" value={line.qty}
-                    onChange={(e) => onChange(line.product.id, { qty: e.target.value, ok: false })} />
-                </div>
-                <div className="w-32 sm:w-36">
-                  <label className="text-xs text-slate-500">Price (GH₵)</label>
-                  <input className="input" type="number" min="0.01" step="0.01" value={line.price}
-                    onChange={(e) => onChange(line.product.id, { price: e.target.value })}
-                    onBlur={(e) => e.target.value !== '' && onChange(line.product.id, { price: String(price2(e.target.value)) })} />
-                  {line.priceHint && line.price === line.priceHint.value && (
-                    <div className="mt-0.5 text-[11px] text-slate-400">{line.priceHint.label}</div>
-                  )}
-                </div>
-                <div className="ml-auto text-right sm:w-32">
-                  <div className="text-xs text-slate-500">Amount</div>
-                  <div className="font-bold">{money(qtyOk ? qty * price2(line.price) : 0)}</div>
-                </div>
-                <button onClick={() => onRemove(line.product.id)} className="text-slate-300 hover:text-red-500">✕</button>
+                <QtyPriceAmount line={line} onChange={onChange} onRemove={onRemove} />
               </div>
 
               {line.product.owed_qty > 0 && stock > 0 && (
@@ -279,11 +343,11 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
                     Only {stock} in stock. Add anyway? {qty - stock} will be marked as owed to the customer.
                   </div>
                   <div className="flex gap-2">
-                    <button onClick={() => onChange(line.product.id, { ok: true })}
+                    <button onClick={() => onChange(line.key, { ok: true })}
                       className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-red-700">
                       Add anyway
                     </button>
-                    <button onClick={() => onRemove(line.product.id)}
+                    <button onClick={() => onRemove(line.key)}
                       className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-medium text-red-600">
                       Remove
                     </button>
@@ -301,17 +365,67 @@ function ReviewStep({ lines, onChange, onRemove, onBack, onCheckout }) {
         })}
       </div>
 
-      <div className="flex flex-col gap-4 card p-5 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div className="text-sm text-slate-500">Order total</div>
-          <div className="text-2xl font-bold">{money(total)}</div>
+      <button onClick={onAddExtra}
+        className="w-full rounded-2xl border-2 border-dashed border-slate-200 bg-white px-4 py-3 text-sm font-medium text-indigo-600 hover:border-indigo-300 hover:bg-indigo-50/40">
+        + Add extra charge (service fee, delivery, installation...)
+      </button>
+
+      <div className="card space-y-4 p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="text-sm text-slate-500">Order total</div>
+            <div className="text-2xl font-bold">{money(total)}</div>
+            {missing > 0 && (
+              <div className="text-sm font-medium text-amber-700">
+                + {missing} item{missing === 1 ? '' : 's'} without a price yet
+              </div>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button onClick={onBack} className="btn-ghost">Back to items</button>
+            <button disabled={!canSave} onClick={onSavePending} className="btn-ghost">
+              {isPending ? 'Save changes, finish later' : 'Save as pending'}
+            </button>
+            <button disabled={!canCheckout} onClick={onCheckout} className="btn">
+              {isPending ? 'Finish order' : 'Proceed to checkout'}
+            </button>
+          </div>
         </div>
-        <div className="flex gap-3">
-          <button onClick={onBack} className="btn-ghost">Back to items</button>
-          <button disabled={!allReady} onClick={onCheckout} className="btn">Proceed to checkout</button>
-        </div>
+        {missing > 0 && canSave && (
+          <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            Don't know a price yet? <b>Save as pending</b>. The items are held for this customer, and you or an admin
+            can add the prices and finish the order later from the Orders page.
+          </div>
+        )}
       </div>
     </div>
+  )
+}
+
+function SavePendingModal({ customer, lines, note, saving, error, onClose, onSubmit }) {
+  const [text, setText] = useState(note || '')
+  const missing = lines.filter((l) => lineState(l).priceBlank).length
+  const products = lines.filter((l) => l.product)
+  return (
+    <Modal title="Save as pending" onClose={onClose}>
+      <p className="text-sm text-slate-600">
+        The order for <b>{customer.name}</b> is saved but not finished: no invoice yet, and the customer owes nothing yet.
+      </p>
+      <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-slate-600">
+        {missing > 0 && <li>{missing} price{missing === 1 ? ' is' : 's are'} still needed.</li>}
+        {products.length > 0 && <li>The products are taken out of stock and held for this customer until the order is finished or deleted.</li>}
+        <li>Admins are notified, so the boss can fill in the prices too.</li>
+      </ul>
+      <textarea className="input mt-4" rows="2" placeholder="Note for whoever finishes it (optional, not printed)"
+        value={text} onChange={(e) => setText(e.target.value)} />
+      {error && <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>}
+      <div className="mt-6 flex justify-end gap-3">
+        <button onClick={onClose} className="btn-ghost">Go back</button>
+        <button disabled={saving} onClick={() => onSubmit(text.trim() || null)} className="btn">
+          {saving ? 'Saving...' : 'Save as pending'}
+        </button>
+      </div>
+    </Modal>
   )
 }
 
@@ -341,7 +455,7 @@ function CheckoutModal({ customer, previousBalance, credit, lines, total, saving
   const balance = Math.max(0, toPay - onOrder)
   const prevAfter = Math.max(0, previousBalance - towardOld)
   const maxPaid = toPay + previousBalance
-  const owed = lines.filter((l) => Number(l.qty) > l.product.stock_qty)
+  const owed = lines.filter((l) => lineState(l).short)
 
   return (
     <Modal title="Confirm order" onClose={onClose} wide>
@@ -354,10 +468,10 @@ function CheckoutModal({ customer, previousBalance, credit, lines, total, saving
         </thead>
         <tbody>
           {lines.map((l) => {
-            const short = Number(l.qty) > l.product.stock_qty
+            const short = lineState(l).short
             return (
-              <tr key={l.product.id} className={'border-t border-slate-100 ' + (short ? 'bg-red-50 text-red-700' : '')}>
-                <td className="py-2">{l.product.name}{short && <span className="ml-2 text-xs">({Number(l.qty) - l.product.stock_qty} owed)</span>}</td>
+              <tr key={l.key} className={'border-t border-slate-100 ' + (short ? 'bg-red-50 text-red-700' : '')}>
+                <td className="py-2">{lineName(l)}{short && <span className="ml-2 text-xs">({Number(l.qty) - l.product.stock_qty} owed)</span>}</td>
                 <td className="py-2 text-center">{l.qty}</td>
                 <td className="py-2 text-right">{money(l.price)}</td>
                 <td className="py-2 text-right font-semibold">{money(Number(l.qty) * price2(l.price))}</td>
@@ -468,11 +582,21 @@ function clearDraft(userId) {
   try { localStorage.removeItem(draftKey(userId)) } catch { /* storage blocked */ }
 }
 
-export default function NewOrder() {
-  const { profile } = useAuth()
+// Opening a pending order (or leaving one) starts the page fresh
+export default function NewOrderPage() {
   const [params] = useSearchParams()
+  return <NewOrder key={params.get('pending') || 'new'} />
+}
+
+function NewOrder() {
+  const { profile } = useAuth()
+  const navigate = useNavigate()
+  const [params] = useSearchParams()
+  const pendingId = params.get('pending')
   const started = useRef(false)
   const [restoredAt, setRestoredAt] = useState(null)
+  const [pending, setPending] = useState(null)
+  const [pendingProblem, setPendingProblem] = useState('')
   const [step, setStep] = useState(1)
   const [customers, setCustomers] = useState([])
   const [owedBy, setOwedBy] = useState({})
@@ -481,29 +605,41 @@ export default function NewOrder() {
   const [customer, setCustomer] = useState(null)
   const [lines, setLines] = useState([])
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [pendingOpen, setPendingOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [done, setDone] = useState(null)
+  const [savedPending, setSavedPending] = useState(null)
   const [lastPrices, setLastPrices] = useState({})
   const [loadFailed, setLoadFailed] = useState(false)
   const [shareNote, setShareNote] = useState('')
 
   async function loadData() {
     setLoadFailed(false)
-    const [c, p, b, o] = await Promise.all([
+    const [c, p, b, o, po] = await Promise.all([
       selectAll(() => supabase.from('customers').select('*').order('name').order('id')),
       selectAll(() => supabase.from('products').select('*').eq('is_active', true).order('name').order('id')),
       selectAll(() => supabase.from('customer_balances').select('customer_id, owed, credit').or('owed.gt.0,credit.gt.0').order('customer_id')),
       selectAll(() => supabase.from('product_owed').select('product_id, owed_qty').order('product_id')),
+      pendingId
+        ? supabase.from('pending_orders')
+          .select('id, customer_id, salesperson_id, notes, created_at, salesperson:profiles!pending_orders_salesperson_id_fkey(full_name), pending_order_items(position, product_id, name, qty, price, held_qty, products(name))')
+          .eq('id', pendingId).maybeSingle()
+        : Promise.resolve({ data: null }),
     ])
-    if (c.error || p.error || b.error) {
+    if (c.error || p.error || b.error || po.error) {
       setLoadFailed(true)
       return
     }
     setCustomers(c.data || [])
     const owedQty = {}
     for (const row of o.data || []) owedQty[row.product_id] = row.owed_qty
-    const prods = (p.data || []).map((prod) => ({ ...prod, owed_qty: owedQty[prod.id] || 0 }))
+    // Stock a pending order holds is still available to that order
+    const held = {}
+    for (const item of po.data?.pending_order_items || []) {
+      if (item.product_id) held[item.product_id] = (held[item.product_id] || 0) + item.held_qty
+    }
+    const prods = (p.data || []).map((prod) => ({ ...prod, stock_qty: prod.stock_qty + (held[prod.id] || 0), owed_qty: owedQty[prod.id] || 0 }))
     setProducts(prods)
     const owed = {}
     const credit = {}
@@ -514,9 +650,14 @@ export default function NewOrder() {
     setOwedBy(owed)
     setCreditBy(credit)
 
-    // First load only: start for a customer chosen elsewhere (?customer=), or pick up an unfinished order
+    // First load only: open a pending order (?pending=), start for a customer chosen elsewhere (?customer=),
+    // or pick up an unfinished order
     if (started.current) return
     started.current = true
+    if (pendingId) {
+      openPending(po.data, c.data || [], prods)
+      return
+    }
     const wanted = params.get('customer')
     const draft = readDraft(profile.id)
     if (wanted) {
@@ -536,10 +677,50 @@ export default function NewOrder() {
     }
   }
 
+  function openPending(row, allCustomers, prods) {
+    if (!row) {
+      setPendingProblem('This pending order was already finished or deleted.')
+      return
+    }
+    const salesperson = row.salesperson?.full_name || 'someone'
+    if (row.salesperson_id !== profile.id && profile.role !== 'admin') {
+      setPendingProblem('Only ' + salesperson + ' or an admin can finish this pending order.')
+      return
+    }
+    const found = allCustomers.find((x) => x.id === row.customer_id)
+    if (!found) {
+      setPendingProblem('The customer on this pending order was not found.')
+      return
+    }
+    const opened = []
+    const dropped = []
+    for (const item of [...row.pending_order_items].sort((a, b) => a.position - b.position)) {
+      const price = item.price == null ? '' : String(Number(item.price))
+      if (!item.product_id) {
+        opened.push({ key: extraKey(), product: null, name: item.name, qty: String(item.qty), price, priceHint: null, ok: false })
+        continue
+      }
+      const product = prods.find((x) => x.id === item.product_id)
+      // Removed from inventory since it was saved: left out, and its held stock goes back when saved
+      if (!product) {
+        dropped.push(item.products?.name || 'a removed product')
+        continue
+      }
+      // Running short was already accepted when it was saved
+      opened.push({ key: product.id, product, qty: String(item.qty), price, priceHint: null, ok: item.qty > product.stock_qty })
+    }
+    setCustomer(found)
+    setLines(opened)
+    setStep(opened.length > 0 ? 3 : 2)
+    setPending({ salesperson, createdAt: row.created_at, notes: row.notes, dropped })
+  }
+
   function restore(draft, found, prods) {
     const restoredLines = (draft.lines || [])
-      .map((l) => ({ ...l, product: prods.find((p) => p.id === l.productId) }))
-      .filter((l) => l.product)
+      .map((l) => (l.productId
+        ? { ...l, key: l.productId, product: prods.find((p) => p.id === l.productId) }
+        : { ...l, key: l.key || extraKey(), product: null, name: l.name || '' }))
+      .filter((l) => !l.productId || l.product)
       .map(({ productId, ...l }) => ({ ...l, ok: false }))
     setCustomer(found)
     setLines(restoredLines)
@@ -549,19 +730,19 @@ export default function NewOrder() {
 
   useEffect(() => { loadData(); loadPdf() }, [])
 
-  // Keep the unfinished order on this device
+  // Keep the unfinished order on this device (a pending order is already kept in the database)
   useEffect(() => {
-    if (!started.current || done) return
+    if (!started.current || done || savedPending || pendingId) return
     if (!customer) return
     try {
       localStorage.setItem(draftKey(profile.id), JSON.stringify({
         customerId: customer.id,
         step,
         savedAt: new Date().toISOString(),
-        lines: lines.map((l) => ({ productId: l.product.id, qty: l.qty, price: l.price, priceHint: l.priceHint })),
+        lines: lines.map((l) => ({ key: l.key, productId: l.product ? l.product.id : null, name: l.name, qty: l.qty, price: l.price, priceHint: l.priceHint })),
       }))
     } catch { /* storage full or blocked: the order still works, it just isn't kept */ }
-  }, [customer, lines, step, done])
+  }, [customer, lines, step, done, savedPending])
 
   // Last price used for each product, preferring this customer's last price
   useEffect(() => {
@@ -574,24 +755,49 @@ export default function NewOrder() {
   }, [customer])
 
   function toggleProduct(product) {
-    const exists = lines.find((l) => l.product.id === product.id)
-    if (exists) setLines(lines.filter((l) => l.product.id !== product.id))
+    const exists = lines.find((l) => l.key === product.id)
+    if (exists) setLines(lines.filter((l) => l.key !== product.id))
     else {
       const last = lastPrices[product.id]
       const value = last ? String(Number(last.price)) : ''
       const priceHint = last ? { value, label: last.for_customer ? "This customer's last price" : 'Last price used' } : null
-      setLines([...lines, { product, qty: '1', price: value, priceHint, ok: false }])
+      setLines([...lines, { key: product.id, product, qty: '1', price: value, priceHint, ok: false }])
     }
   }
 
-  function updateLine(id, changes) {
-    setLines(lines.map((l) => (l.product.id === id ? { ...l, ...changes } : l)))
+  function addExtra() {
+    setLines([...lines, { key: extraKey(), product: null, name: '', qty: '1', price: '', priceHint: null, ok: false }])
+    setStep(3)
   }
 
-  function removeLine(id) {
-    const rest = lines.filter((l) => l.product.id !== id)
+  function updateLine(key, changes) {
+    setLines(lines.map((l) => (l.key === key ? { ...l, ...changes } : l)))
+  }
+
+  function removeLine(key) {
+    const rest = lines.filter((l) => l.key !== key)
     setLines(rest)
     if (rest.length === 0) setStep(2)
+  }
+
+  async function savePending(note) {
+    setSaving(true)
+    setError('')
+    const { error } = await supabase.rpc('save_pending_order', {
+      p_customer_id: customer.id,
+      p_items: orderLines(lines),
+      p_notes: note,
+      ...(pendingId ? { p_pending_id: pendingId } : {}),
+    })
+    if (error) {
+      setError(error.message)
+      setSaving(false)
+      return
+    }
+    if (!pendingId) clearDraft(profile.id)
+    setSavedPending({ updated: !!pendingId, missing: lines.filter((l) => lineState(l).priceBlank).length })
+    setPendingOpen(false)
+    setSaving(false)
   }
 
   async function submit({ paid, method, dueDate, notes, useCredit }) {
@@ -599,17 +805,17 @@ export default function NewOrder() {
     setError('')
     // What we expect to be owed, from the stock shown on screen, to spot stock that changed meanwhile
     const expectedOwed = {}
-    for (const l of lines) expectedOwed[l.product.id] = Math.max(0, Number(l.qty) - l.product.stock_qty)
+    for (const l of lines) if (l.product) expectedOwed[l.product.id] = Math.max(0, Number(l.qty) - l.product.stock_qty)
 
-    const items = lines.map((l) => ({ product_id: l.product.id, qty: Number(l.qty), price: price2(l.price) }))
     const { data: orderId, error } = await supabase.rpc('create_order', {
       p_customer_id: customer.id,
-      p_items: items,
+      p_items: orderLines(lines),
       p_amount_paid: paid,
       p_method: method,
       p_due_date: dueDate,
       p_notes: notes,
       p_use_credit: !!useCredit,
+      ...(pendingId ? { p_pending_id: pendingId } : {}),
     })
     if (error) {
       setError(error.message)
@@ -619,7 +825,7 @@ export default function NewOrder() {
 
     // Build the invoice from what was actually saved (stock may have changed since this page loaded)
     const { data: order } = await supabase.from('orders')
-      .select('order_number, created_at, previous_balance, due_date, notes, order_items(product_id, qty, price, pending_qty, product_name, products(name)), payments(amount, note, receipt_id)')
+      .select('order_number, created_at, previous_balance, due_date, notes, salesperson:profiles!orders_salesperson_id_fkey(full_name), order_items(product_id, qty, price, pending_qty, product_name, products(name)), payments(amount, note, receipt_id)')
       .eq('id', orderId).single()
     // Money now on this order: cash received today plus any credit used
     let onOrder = 0
@@ -632,7 +838,7 @@ export default function NewOrder() {
       else { cashOnOrder += Number(p.amount); receiptId = p.receipt_id }
     }
     const stockChanged = order.order_items
-      .filter((i) => i.pending_qty > (expectedOwed[i.product_id] || 0))
+      .filter((i) => i.product_id && i.pending_qty > (expectedOwed[i.product_id] || 0))
       .map((i) => ({ name: i.product_name || i.products.name, extra: i.pending_qty - (expectedOwed[i.product_id] || 0) }))
     const invoice = {
       receiptId,
@@ -644,18 +850,18 @@ export default function NewOrder() {
       date: order.created_at,
       dueDate: order.due_date,
       customer,
-      salesperson: profile.full_name,
+      salesperson: order.salesperson?.full_name || profile.full_name,
       paid: onOrder,
       previousBalance: Number(order.previous_balance),
       notes: order.notes,
       items: order.order_items.map((item) => ({
-        name: item.product_name || item.products.name,
+        name: item.product_name || item.products?.name,
         qty: item.qty,
         price: Number(item.price),
         pending_qty: item.pending_qty,
       })),
     }
-    clearDraft(profile.id)
+    if (!pendingId) clearDraft(profile.id)
     downloadInvoice(invoice)
     setDone(invoice)
     setConfirmOpen(false)
@@ -663,14 +869,42 @@ export default function NewOrder() {
   }
 
   function reset() {
+    // Leaving a pending order: the page starts fresh (and the user's own unfinished order comes back)
+    if (pendingId) {
+      navigate('/orders/new')
+      return
+    }
     clearDraft(profile.id)
     setRestoredAt(null)
     setStep(1)
     setCustomer(null)
     setLines([])
     setDone(null)
+    setSavedPending(null)
     setShareNote('')
     loadData()
+  }
+
+  if (savedPending) {
+    return (
+      <div className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-10 text-center shadow-sm">
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-amber-50 text-2xl text-amber-600">⏸</div>
+        <h1 className="mt-5 text-xl font-bold">{savedPending.updated ? 'Pending order updated' : 'Saved as pending'}</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {customer.name} · {savedPending.missing > 0
+            ? savedPending.missing + ' price' + (savedPending.missing === 1 ? '' : 's') + ' still needed'
+            : 'all prices filled in'}
+        </p>
+        <p className="mt-3 text-sm text-slate-500">
+          No invoice yet, and the customer owes nothing until it is finished. The items are held for them.
+          Finish it from the Orders page{savedPending.updated || profile.role === 'admin' ? '.' : '. The admins have been notified.'}
+        </p>
+        <div className="mt-8 flex flex-wrap justify-center gap-3">
+          <Link to="/orders" className="btn">View pending orders</Link>
+          <button onClick={reset} className="btn-ghost">New order</button>
+        </div>
+      </div>
+    )
   }
 
   if (done) {
@@ -726,7 +960,7 @@ export default function NewOrder() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight text-slate-900">New order</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-slate-900">{pendingId ? 'Finish pending order' : 'New order'}</h1>
           {customer && (
             <p className="text-sm text-slate-500">
               For {customer.name}
@@ -739,6 +973,26 @@ export default function NewOrder() {
 
       {loadFailed && <LoadError onRetry={loadData} />}
 
+      {pendingProblem && (
+        <div className="rounded-xl bg-amber-50 px-4 py-6 text-center text-sm text-amber-900">
+          {pendingProblem} <Link to="/orders" className="font-medium text-indigo-700 hover:underline">Back to orders</Link>
+        </div>
+      )}
+
+      {pending && (
+        <div className="flex flex-wrap items-start justify-between gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          <div>
+            Pending order saved by <b>{pending.salesperson}</b> on {new Date(pending.createdAt).toLocaleString()}.
+            Fill in the missing prices and finish it, or save your changes for later.
+            {pending.notes && <div className="mt-1">Note: {pending.notes}</div>}
+            {pending.dropped.length > 0 && (
+              <div className="mt-1 font-medium">No longer in inventory, so left out: {pending.dropped.join(', ')}</div>
+            )}
+          </div>
+          <button onClick={reset} className="font-medium text-amber-800 hover:underline">Leave</button>
+        </div>
+      )}
+
       {restoredAt && customer && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-indigo-50 px-4 py-3 text-sm text-indigo-900">
           <span>Continuing your unfinished order for <b>{customer.name}</b> from {new Date(restoredAt).toLocaleString()}.</span>
@@ -746,21 +1000,31 @@ export default function NewOrder() {
         </div>
       )}
 
-      {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} creditBy={creditBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
+      {!pendingProblem && (!pendingId || pending) && (
+        <>
+          {step === 1 && <CustomerStep customers={customers} owedBy={owedBy} creditBy={creditBy} onPick={(c) => { setCustomer(c); setStep(2) }} />}
 
-      {step === 2 && (
-        <ItemsStep products={products} selectedIds={lines.map((l) => l.product.id)}
-          onToggle={toggleProduct} onBack={() => setStep(1)} onNext={() => setStep(3)} />
-      )}
+          {step === 2 && (
+            <ItemsStep products={products} selectedIds={lines.filter((l) => l.product).map((l) => l.product.id)} count={lines.length}
+              onToggle={toggleProduct} onAddExtra={addExtra} onBack={() => setStep(1)} onNext={() => setStep(3)} />
+          )}
 
-      {step === 3 && (
-        <ReviewStep lines={lines} onChange={updateLine} onRemove={removeLine}
-          onBack={() => setStep(2)} onCheckout={() => { setError(''); setConfirmOpen(true) }} />
+          {step === 3 && (
+            <ReviewStep lines={lines} isPending={!!pendingId} onChange={updateLine} onRemove={removeLine} onAddExtra={addExtra}
+              onBack={() => setStep(2)} onCheckout={() => { setError(''); setConfirmOpen(true) }}
+              onSavePending={() => { setError(''); setPendingOpen(true) }} />
+          )}
+        </>
       )}
 
       {confirmOpen && (
         <CheckoutModal customer={customer} previousBalance={owedBy[customer.id] || 0} credit={creditBy[customer.id] || 0} lines={lines} total={total}
           saving={saving} error={error} onClose={() => setConfirmOpen(false)} onSubmit={submit} />
+      )}
+
+      {pendingOpen && (
+        <SavePendingModal customer={customer} lines={lines} note={pending?.notes} saving={saving} error={error}
+          onClose={() => setPendingOpen(false)} onSubmit={savePending} />
       )}
     </div>
   )

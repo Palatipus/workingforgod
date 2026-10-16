@@ -5,6 +5,7 @@ import LoadError from '../components/LoadError'
 import DateRange, { applyRange } from '../components/DateRange'
 import { money, searchTerm } from '../format'
 import OrderDetail from './orders/OrderDetail'
+import PendingOrders from './orders/PendingOrders'
 
 const PAGE = 50
 
@@ -98,6 +99,8 @@ export default function Orders() {
         <h1 className="text-2xl font-bold tracking-tight text-slate-900">Orders</h1>
         <p className="text-sm text-slate-500">Everything sold by the team: who, to whom, when and what is still owed.</p>
       </div>
+
+      <PendingOrders />
 
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between md:gap-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
