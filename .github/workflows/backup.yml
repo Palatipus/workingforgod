@@ -1,0 +1,93 @@
+# Nightly backup of the whole database (all data since day one) and the product photos.
+# Saved on the "backups" branch of this repository: the last 30 nights, plus one copy per month kept for good.
+# Render deploys only from main, so this never triggers a deploy. See RESTORE.md to restore.
+name: Nightly backup
+
+on:
+  schedule:
+    - cron: '0 1 * * *'   # 01:00 GMT (Ghana time), every night
+  workflow_dispatch:       # "Run workflow" button on the Actions tab, for a backup right now
+
+permissions:
+  contents: write
+
+concurrency: backup
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+      PG: /usr/lib/postgresql/17/bin
+    steps:
+      - name: Check the database secret is set
+        run: |
+          if [ -z "$DB_URL" ]; then
+            echo "::error::Add the SUPABASE_DB_URL secret first (Settings > Secrets and variables > Actions). See RESTORE.md."
+            exit 1
+          fi
+
+      - name: Install PostgreSQL 17 tools
+        run: |
+          sudo apt-get install -y -q postgresql-common
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y -q postgresql-client-17
+
+      - name: Get the earlier backups
+        run: |
+          git init -q backups
+          cd backups
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git fetch -q --depth 1 origin backups; then git checkout -q FETCH_HEAD; fi
+
+      - name: Copy the database
+        working-directory: backups
+        run: |
+          set -euo pipefail
+          day=$(date -u +%F)
+          work=$(mktemp -d)
+          # Tables, views, functions and rules of the app
+          $PG/pg_dump "$DB_URL" --schema-only --schema=public --no-owner -f "$work/schema.sql"
+          # Every Supabase project already has the public schema
+          sed -i 's/^CREATE SCHEMA public;$/CREATE SCHEMA IF NOT EXISTS public;/' "$work/schema.sql"
+          # Staff logins (needed so orders keep their salesperson)
+          $PG/pg_dump "$DB_URL" --data-only --table=auth.users --table=auth.identities --no-owner -f "$work/auth.sql"
+          # Every customer, order, payment, product, stock movement...
+          $PG/pg_dump "$DB_URL" --data-only --schema=public --no-owner -f "$work/data.sql"
+          # Counts, to check a restore against
+          psql "$DB_URL" -At -c "select 'orders', count(*) from orders union all select 'customers', count(*) from customers
+            union all select 'products', count(*) from products union all select 'receipts', count(*) from receipts" > "$work/counts.txt"
+
+          mkdir -p daily monthly
+          tar -czf "daily/$day.tar.gz" -C "$work" schema.sql auth.sql data.sql counts.txt
+          month=$(date -u +%Y-%m)
+          [ -f "monthly/$month.tar.gz" ] || cp "daily/$day.tar.gz" "monthly/$month.tar.gz"
+          # Keep the 30 newest nightly copies
+          ls daily/*.tar.gz | sort | head -n -30 | xargs -r rm --
+          echo "Saved daily/$day.tar.gz ($(du -h "daily/$day.tar.gz" | cut -f1))"
+          cat "$work/counts.txt"
+
+      - name: Copy new product photos
+        working-directory: backups
+        run: |
+          set -uo pipefail
+          psql "$DB_URL" -At -c "select distinct image_url from products where image_url like 'http%/product-images/%'" |
+          while read -r url; do
+            path="photos/${url#*/product-images/}"
+            [ -f "$path" ] && continue
+            mkdir -p "$(dirname "$path")"
+            curl -fsS --retry 3 -o "$path" "$url" || echo "::warning::Could not download $url"
+          done
+          echo "$(find photos -type f 2>/dev/null | wc -l) photos saved"
+
+      - name: Save to the backups branch
+        working-directory: backups
+        run: |
+          # One commit holding everything (older nights are files, not history), so the branch stays small
+          git config user.name "backup bot"
+          git config user.email "backup-bot@users.noreply.github.com"
+          git checkout -q --orphan fresh
+          git add -A
+          git commit -q -m "Backup $(date -u +%F)"
+          git push -q -f origin fresh:backups
