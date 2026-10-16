@@ -39,7 +39,11 @@ Deno.serve(async (req) => {
   const gone: string[] = []
   await Promise.all((devices ?? []).map(async (d) => {
     try {
-      await webpush.sendNotification({ endpoint: d.endpoint, keys: { p256dh: d.p256dh, auth: d.auth } }, payload, { TTL: 86400 })
+      await webpush.sendNotification({ endpoint: d.endpoint, keys: { p256dh: d.p256dh, auth: d.auth } }, payload, {
+        TTL: 86400,
+        // High priority: phones deliver it right away instead of holding it until the app or screen wakes up
+        urgency: 'high',
+      })
     } catch (err) {
       // The phone unsubscribed, uninstalled the app or cleared its data
       if (err.statusCode === 404 || err.statusCode === 410) gone.push(d.id)
