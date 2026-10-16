@@ -15,7 +15,7 @@ concurrency: backup
 
 jobs:
   backup:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       DB_URL: ${{ secrets.SUPABASE_DB_URL }}
@@ -45,6 +45,8 @@ jobs:
         working-directory: backups
         run: |
           set -euo pipefail
+          # A pasted secret often carries a hidden line break or space at the end
+          DB_URL="${DB_URL//[$'\t\r\n ']}"
           day=$(date -u +%F)
           work=$(mktemp -d)
           # Tables, views, functions and rules of the app
@@ -72,6 +74,8 @@ jobs:
         working-directory: backups
         run: |
           set -uo pipefail
+          # A pasted secret often carries a hidden line break or space at the end
+          DB_URL="${DB_URL//[$'\t\r\n ']}"
           psql "$DB_URL" -At -c "select distinct image_url from products where image_url like 'http%/product-images/%'" |
           while read -r url; do
             path="photos/${url#*/product-images/}"
