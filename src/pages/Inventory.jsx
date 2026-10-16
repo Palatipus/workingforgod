@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { supabase, selectAll, onTableChanges } from '../supabase'
 import { useAuth } from '../AuthContext'
@@ -486,13 +486,17 @@ function LowStockDialog({ products, owed, onClose }) {
 export default function Inventory() {
   const [all, setAll] = useState([])
   const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState('all')
   const [editing, setEditing] = useState(null)
   const [stocking, setStocking] = useState(null)
   const [adjusting, setAdjusting] = useState(null)
   const [loadFailed, setLoadFailed] = useState(false)
   const [lowOpen, setLowOpen] = useState(false)
   const [params, setParams] = useSearchParams()
+  // ?filter=low (dashboard) opens a list straight away
+  const [filter, setFilter] = useState(() => {
+    const wanted = params.get('filter')
+    return [...filters, ['owed']].some(([key]) => key === wanted) ? wanted : 'all'
+  })
   const { profile } = useAuth()
   const isAdmin = profile.role === 'admin'
 
@@ -534,6 +538,14 @@ export default function Inventory() {
   // ?product=<id> opens that product's history (used by low-stock alerts)
   const historyId = params.get('product')
   const historyProduct = products.find((p) => p.id === historyId)
+  // A low-stock alert (?product=) opens the Low stock list too, with that product's history on top
+  const openedFromAlert = useRef(false)
+  useEffect(() => {
+    if (openedFromAlert.current || !historyProduct || params.get('filter')) return
+    openedFromAlert.current = true
+    if (historyProduct.stock_qty <= historyProduct.reorder_level) setFilter('low')
+  }, [historyProduct])
+
   function showHistory(id) {
     setParams(id ? { product: id } : {})
   }

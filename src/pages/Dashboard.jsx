@@ -38,10 +38,12 @@ function EmptyState({ icon, title, text, actionLabel, actionTo, big, compact }) 
   )
 }
 
-function StatCard({ label, value, change, alert, icon, tone, note }) {
+function StatCard({ label, value, change, alert, icon, tone, note, to }) {
   const hasChange = change !== undefined && change !== null
+  // A card with `to` opens that list when tapped
+  const Box = to ? Link : 'div'
   return (
-    <div className="card p-5">
+    <Box to={to} className={'card block p-5' + (to ? ' transition hover:border-indigo-200 hover:shadow-md' : '')}>
       <div className="flex items-center justify-between">
         <div className="text-sm font-medium text-slate-500">{label}</div>
         <div className={'flex h-9 w-9 items-center justify-center rounded-lg ' + tones[tone]}>
@@ -58,7 +60,7 @@ function StatCard({ label, value, change, alert, icon, tone, note }) {
       ) : (
         <div className="mt-1 text-xs text-slate-400">{note}</div>
       )}
-    </div>
+    </Box>
   )
 }
 
@@ -310,9 +312,9 @@ function AdminDashboard() {
           change={percentChange(stats.cash_this_month, stats.cash_last_month)} />
         <StatCard label="Orders this month" icon="receipt" tone="blue" note="Orders created"
           value={stats.orders_this_month} />
-        <StatCard label="Pending deliveries" icon="truck" tone="red" note="Items still owed"
+        <StatCard label="Pending deliveries" icon="truck" tone="red" note="Items still owed" to="/inventory?filter=owed"
           value={stats.pending_deliveries} alert={stats.pending_deliveries > 0} />
-        <StatCard label="Low / out of stock" icon="box" tone="amber" note="Products to restock"
+        <StatCard label="Low / out of stock" icon="box" tone="amber" note="Products to restock" to="/inventory?filter=low"
           value={stats.low_stock_count + stats.out_of_stock_count} alert={stats.out_of_stock_count > 0} />
         <StatCard label="Owed by customers" icon="users" tone="red"
           note={(stats.customers_owing || 0) + ' customer' + (stats.customers_owing === 1 ? '' : 's') + ' owing' +
