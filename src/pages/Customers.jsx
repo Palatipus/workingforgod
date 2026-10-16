@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, selectAll } from '../supabase'
+import { supabase, selectAll, onTableChanges } from '../supabase'
 import LoadError from '../components/LoadError'
 import { money } from '../format'
 import { CustomerForm } from './customers/dialogs'
@@ -42,13 +42,8 @@ export default function Customers() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('customers-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, load)
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    // Receipts and refunds too, so deposits and refunds show without a refresh
+    return onTableChanges('customers-live', ['orders', 'order_items', 'payments', 'receipts', 'refunds'], load)
   }, [])
 
   const shown = rows.filter((r) => {

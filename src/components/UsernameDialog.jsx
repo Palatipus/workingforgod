@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from './Modal'
 import { cleanUsername, validUsername, usernameRule } from '../format'
+import { errorText } from '../errors'
 
 // Choose or change a username. With `person`, an admin sets it for someone else.
 export default function UsernameDialog({ person, current, title, intro, onClose, onSaved }) {
@@ -23,7 +24,7 @@ export default function UsernameDialog({ person, current, title, intro, onClose,
       : await supabase.rpc('set_my_username', { p_username: name })
     setSaving(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     onSaved(name)

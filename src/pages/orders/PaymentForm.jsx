@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../../supabase'
 import { paymentMethods } from '../../format'
+import { errorText } from '../../errors'
 
 // Record a payment against one order. Calls onSaved(receiptId).
 export default function PaymentForm({ order, balance, onSaved }) {
@@ -22,7 +23,7 @@ export default function PaymentForm({ order, balance, onSaved }) {
     })
     setSaving(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     setAmount('')

@@ -1,3 +1,5 @@
+import { reportLine } from '../errors'
+
 // Shown when data could not load (usually a weak connection), so empty lists aren't mistaken for missing data
 export default function LoadError({ onRetry, compact }) {
   return (
@@ -5,7 +7,9 @@ export default function LoadError({ onRetry, compact }) {
       (compact ? 'p-4' : 'p-8')}>
       <div>
         <div className="font-semibold">Could not load this</div>
-        <div className="mt-0.5 text-amber-800">Check your internet connection and try again.</div>
+        <div className="mt-0.5 text-amber-800">
+          Check your internet connection and try again. If it keeps happening, {reportLine('E901').replace(/^T/, 't')}
+        </div>
       </div>
       {onRetry && <button onClick={onRetry} className="btn">Try again</button>}
     </div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { shareNotice } from '../invoice'
+import { errorText } from '../errors'
 
 // "Download" and "Share" buttons for a document that is loaded on demand (receipt, refund note, ...)
 export default function DocActions({ load, download, share, label = '', className = '' }) {
@@ -13,8 +14,8 @@ export default function DocActions({ load, download, share, label = '', classNam
       const data = await load()
       if (sharing) setNote(shareNotice(await share(data)))
       else await download(data)
-    } catch {
-      setNote('Could not load this. Check your connection and try again.')
+    } catch (err) {
+      setNote(errorText(err))
     }
     setBusy(false)
   }

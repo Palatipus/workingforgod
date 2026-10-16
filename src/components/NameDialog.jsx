@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from './Modal'
+import { errorText } from '../errors'
 
 // Change your own full name, or (admins, with `person`) someone else's
 export default function NameDialog({ person, current, onClose, onSaved }) {
@@ -18,7 +19,7 @@ export default function NameDialog({ person, current, onClose, onSaved }) {
       ? await supabase.rpc('set_user_name', { p_user: person.id, p_name: clean })
       : await supabase.rpc('set_my_name', { p_name: clean })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(errorText(error))
     onSaved(clean)
   }
 

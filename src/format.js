@@ -63,6 +63,7 @@ export const movementLabels = {
   delivery: 'Delivered (owed item)',
   cancel: 'Order cancelled',
   adjustment: 'Adjustment',
+  return: 'Returned by customer',
   hold: 'Held for pending order',
   release: 'Released from pending order',
 }

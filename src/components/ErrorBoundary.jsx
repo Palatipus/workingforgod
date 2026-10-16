@@ -1,4 +1,5 @@
 import { Component } from 'react'
+import { developerContact } from '../errors'
 
 // After a new version is deployed, pages that weren't loaded yet have new file names, so opening them
 // fails in an app that was already open. Reloading once fetches the new version.
@@ -46,8 +47,14 @@ export default class ErrorBoundary extends Component {
           <p className="mt-2 text-sm text-slate-500">
             {stale
               ? 'Reload to get the latest version.'
-              : 'Reload the page. Your saved work is safe. If this keeps happening, tell your admin what you were doing.'}
+              : 'Reload the page. Your saved work is safe. If it keeps happening, take a screenshot of this screen and send it to ' +
+                developerContact() + ' on WhatsApp, saying what you were doing.'}
           </p>
+          {!stale && (
+            <p className="mt-3 break-words rounded-lg bg-slate-50 px-3 py-2 text-left font-mono text-xs text-slate-500">
+              E900: {String(this.state.error?.message || this.state.error).slice(0, 200)} [{window.location.pathname}]
+            </p>
+          )}
           <button onClick={() => window.location.reload()} className="btn mt-6 w-full !py-2.5">Reload</button>
         </div>
       </div>

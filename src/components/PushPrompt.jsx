@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { disablePush, enablePush, needsHomeScreen, pushEnabledHere, pushPermission, pushSupported } from '../push'
+import { errorText } from '../errors'
 
 const DISMISSED = 'push-prompt-dismissed'
 const ASK_AGAIN_DAYS = 7
@@ -31,8 +32,8 @@ export default function PushPrompt() {
     try {
       await enablePush()
       setShow(false)
-    } catch {
-      setError("Couldn't turn on notifications. Check your connection and try again.")
+    } catch (err) {
+      setError(errorText(err))
     }
     setBusy(false)
   }
@@ -81,8 +82,8 @@ export function PushToggle() {
           ? 'Notifications are blocked for this app. Allow them in your phone or browser settings, then try again.'
           : 'Notifications were not allowed.')
       }
-    } catch {
-      setError("Couldn't change this. Check your connection and try again.")
+    } catch (err) {
+      setError(errorText(err))
     }
     setBusy(false)
   }

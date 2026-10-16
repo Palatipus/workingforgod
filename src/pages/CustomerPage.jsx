@@ -8,6 +8,7 @@ import ReceiptActions from '../components/ReceiptActions'
 import { money, methodLabel, receiptNumber } from '../format'
 import { loadPdf } from '../invoice'
 import { CustomerPayment, CustomerForm, OpeningBalanceForm, StatementButtons } from './customers/dialogs'
+import { errorText } from '../errors'
 
 function Stat({ label, value, tone }) {
   return (
@@ -58,7 +59,7 @@ export default function CustomerPage() {
 
   async function useCredit() {
     const { data, error } = await supabase.rpc('apply_customer_credit', { p_customer_id: id })
-    if (error) return error.message
+    if (error) return errorText(error)
     setDialog(null)
     setNote(money(data) + ' of credit was used to pay their invoices.')
     load()

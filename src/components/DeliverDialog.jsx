@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../supabase'
 import Modal from './Modal'
+import { errorText } from '../errors'
 
 // Deliver some or all of an item still owed to a customer (takes it out of stock)
 export default function DeliverDialog({ item, productName, customerName, onClose, onDone }) {
@@ -16,7 +17,7 @@ export default function DeliverDialog({ item, productName, customerName, onClose
     const { error } = await supabase.rpc('mark_delivered', { p_item_id: item.id, p_qty: n })
     setSaving(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     onDone()

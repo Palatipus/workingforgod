@@ -6,6 +6,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { supabase, selectAll } from '../supabase'
 import { useAuth } from '../AuthContext'
 import { money as formatMoney } from '../format'
+import { errorText } from '../errors'
 
 const money = (n) => formatMoney(n, 0)
 
@@ -148,7 +149,7 @@ function PendingSignups({ onChanged }) {
     const { error } = await supabase.rpc('set_user_status', { p_user: confirming.person.id, p_status: confirming.action })
     setBusy(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     setConfirming(null)
@@ -253,7 +254,7 @@ function AdminDashboard() {
     const { data, error } = await supabase.rpc('dashboard_stats')
     // No error code means the request never reached the server (connection problem)
     if (error && !error.code) setOffline(true)
-    else if (error) setLoadError(error.message)
+    else if (error) setLoadError(errorText(error))
     else setStats(data)
   }
 

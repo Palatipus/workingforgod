@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import PasswordInput from '../components/PasswordInput'
 import Icon from '../components/Icon'
 import { cleanUsername, validUsername, usernameRule } from '../format'
+import { errorText } from '../errors'
 
 
 export default function Login() {
@@ -26,7 +27,7 @@ export default function Login() {
     if (!loginEmail.includes('@')) {
       const { data, error } = await supabase.rpc('email_for_login', { p_username: loginEmail, p_password: password })
       if (error) {
-        setError(error.message.includes('Too many') ? error.message : 'Could not log in. Please try again.')
+        setError(errorText(error))
         return
       }
       loginEmail = data
@@ -58,8 +59,7 @@ export default function Login() {
       options: { data: { full_name: fullName, username: cleanName } },
     })
     if (error) {
-      if (error.message.toLowerCase().includes('already')) setError('That email is already registered.')
-      else setError(error.message)
+      setError(errorText(error))
     }
   }
 

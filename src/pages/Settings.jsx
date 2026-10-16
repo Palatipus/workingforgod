@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import LoadError from '../components/LoadError'
 import { company, applyCompany } from '../company'
 import { downloadInvoice } from '../invoice'
+import { errorText } from '../errors'
 
 function Field({ label, hint, children }) {
   return (
@@ -102,7 +103,7 @@ export default function Settings() {
     setSaving(true)
     const { data: saved, error } = await supabase.from('company_settings').update({ data }).eq('id', 1).select('id')
     setSaving(false)
-    if (error) return setMessage({ ok: false, text: error.message })
+    if (error) return setMessage({ ok: false, text: errorText(error) })
     if (!saved || saved.length === 0) {
       return setMessage({ ok: false, text: 'Nothing was saved. Only admins can change these details. Make sure schema_update_11.sql has been run.' })
     }

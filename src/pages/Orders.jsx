@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { supabase } from '../supabase'
+import { supabase, onTableChanges } from '../supabase'
 import LoadError from '../components/LoadError'
 import DateRange, { applyRange } from '../components/DateRange'
 import { money, searchTerm } from '../format'
@@ -78,15 +78,7 @@ export default function Orders() {
   }, [query, filter, limit, version, range])
 
   useEffect(() => {
-    const refresh = () => setVersion((v) => v + 1)
-    const channel = supabase
-      .channel('orders-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'payments' }, refresh)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'refunds' }, refresh)
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return onTableChanges('orders-live', ['orders', 'order_items', 'payments', 'refunds'], () => setVersion((v) => v + 1))
   }, [])
 
   function openOrder(id) {

@@ -5,6 +5,7 @@ import Modal from '../components/Modal'
 import UsernameDialog from '../components/UsernameDialog'
 import NameDialog from '../components/NameDialog'
 import LoadError from '../components/LoadError'
+import { errorText } from '../errors'
 
 const statusBadge = {
   approved: ['Active', 'bg-emerald-50 text-emerald-700'],
@@ -64,7 +65,7 @@ export default function Team() {
     const { error } = await supabase.rpc(action.rpc, { p_user: confirming.person.id, ...action.args })
     setBusy(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     setConfirming(null)

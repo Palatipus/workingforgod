@@ -8,6 +8,7 @@ import LoadError from '../components/LoadError'
 import ReceiptActions from '../components/ReceiptActions'
 import { money, stockStatus, paymentMethods, today } from '../format'
 import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, invoiceTotals, loadPdf } from '../invoice'
+import { errorText } from '../errors'
 
 function StepBar({ step }) {
   const names = ['Customer', 'Items', 'Review']
@@ -100,7 +101,7 @@ function CustomerStep({ customers, owedBy, creditBy, onPick }) {
       location: form.location.trim() || null,
     }).select().single()
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       return
     }
@@ -790,7 +791,7 @@ function NewOrder() {
       ...(pendingId ? { p_pending_id: pendingId } : {}),
     })
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       return
     }
@@ -818,7 +819,7 @@ function NewOrder() {
       ...(pendingId ? { p_pending_id: pendingId } : {}),
     })
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       return
     }

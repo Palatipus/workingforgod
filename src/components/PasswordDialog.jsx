@@ -3,6 +3,7 @@ import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from './Modal'
 import PasswordInput from './PasswordInput'
+import { errorText } from '../errors'
 
 // Change your password while logged in. Checks the current password first.
 export default function PasswordDialog({ onClose }) {
@@ -29,7 +30,7 @@ export default function PasswordDialog({ onClose }) {
     }
     const { error } = await supabase.auth.updateUser({ password: next })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(errorText(error))
     setDone(true)
   }
 

@@ -4,6 +4,7 @@ import Modal from '../../components/Modal'
 import { money, paymentMethods } from '../../format'
 import { invoiceNumber } from '../../invoice'
 import { itemLabel } from './itemLabel'
+import { errorText } from '../../errors'
 
 // Take items off an order (owed units first, then goods handed back), refunding if needed. Calls onDone(refundedAmount).
 export default function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) {
@@ -39,7 +40,7 @@ export default function ReturnDialog({ order, paid, isAdmin, onClose, onDone }) 
     })
     setSaving(false)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       return
     }
     onDone(Number(data || 0))

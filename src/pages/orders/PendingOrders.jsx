@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { supabase } from '../../supabase'
+import { supabase, onTableChanges } from '../../supabase'
 import { useAuth } from '../../AuthContext'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { money } from '../../format'
+import { errorText } from '../../errors'
 
 // Orders saved without finishing (usually waiting for prices). Their stock is held until finished or deleted.
 export default function PendingOrders() {
@@ -20,18 +21,14 @@ export default function PendingOrders() {
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('pending-orders-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pending_orders' }, load)
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return onTableChanges('pending-orders-live', ['pending_orders'], load)
   }, [])
 
   if (rows.length === 0) return null
 
   async function remove() {
     const { error } = await supabase.rpc('delete_pending_order', { p_pending_id: deleting.id })
-    if (error) return error.message
+    if (error) return errorText(error)
     setDeleting(null)
     load()
   }

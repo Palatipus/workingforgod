@@ -11,6 +11,7 @@ import { downloadInvoice, shareInvoice, shareNotice, invoiceNumber, loadPdf } fr
 import PaymentForm from './PaymentForm'
 import ReturnDialog from './ReturnDialog'
 import { itemLabel } from './itemLabel'
+import { errorText } from '../../errors'
 
 // Everything about one order: items, deliveries, payments, returns, refunds, invoice and cancelling.
 export default function OrderDetail({ orderId, version, onClose, onChanged }) {
@@ -118,14 +119,14 @@ export default function OrderDetail({ orderId, version, onClose, onChanged }) {
 
   async function reversePayment() {
     const { error } = await supabase.rpc('reverse_payment', { p_payment_id: reversing.id })
-    if (error) return error.message
+    if (error) return errorText(error)
     setReversing(null)
     changed()
   }
 
   async function cancelOrder() {
     const { error } = await supabase.rpc('cancel_order', { p_order_id: order.id, p_reason: cancelReason })
-    if (error) return error.message
+    if (error) return errorText(error)
     setCancelling(false)
     changed()
   }

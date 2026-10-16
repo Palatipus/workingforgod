@@ -24,3 +24,20 @@ export async function selectAll(makeQuery) {
   }
 }
 
+
+// Reload a page when any of these tables change. One order or payment changes several tables at once,
+// so wait until the changes stop for a moment and reload once. Returns a function that stops listening.
+export function onTableChanges(name, tables, reload, wait = 700) {
+  let timer
+  const later = () => {
+    clearTimeout(timer)
+    timer = setTimeout(reload, wait)
+  }
+  let channel = supabase.channel(name)
+  for (const table of tables) channel = channel.on('postgres_changes', { event: '*', schema: 'public', table }, later)
+  channel.subscribe()
+  return () => {
+    clearTimeout(timer)
+    supabase.removeChannel(channel)
+  }
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { supabase, selectAll } from '../supabase'
+import { supabase, selectAll, onTableChanges } from '../supabase'
 import { useAuth } from '../AuthContext'
 import Modal from '../components/Modal'
 import LoadError from '../components/LoadError'
@@ -8,6 +8,7 @@ import DeliverDialog from '../components/DeliverDialog'
 import { stockStatus, adjustReasons, movementLabels } from '../format'
 import { invoiceNumber, viewLowStock, downloadLowStock, shareLowStock, lowStockNeed, shareNotice } from '../invoice'
 import { shrinkImage } from '../image'
+import { errorText } from '../errors'
 
 const filters = [
   ['all', 'All'],
@@ -88,7 +89,7 @@ function ProductForm({ product, onClose, onSaved }) {
       }
       onSaved()
     } catch (err) {
-      setError(err.message)
+      setError(errorText(err, 'upload'))
       setSaving(false)
     }
   }
@@ -98,7 +99,7 @@ function ProductForm({ product, onClose, onSaved }) {
     setSaving(true)
     const { error } = await supabase.from('products').update({ is_active: false }).eq('id', product.id)
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       setConfirmRemove(false)
       return
@@ -196,7 +197,7 @@ function StockForm({ product, onClose, onSaved }) {
       supplier: supplier || null,
     })
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       return
     }
@@ -242,7 +243,7 @@ function AdjustForm({ product, onClose, onSaved }) {
       p_note: note || null,
     })
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setSaving(false)
       return
     }
@@ -436,9 +437,9 @@ function LowStockDialog({ products, owed, onClose }) {
       if (action === 'view') await viewLowStock(data, tab)
       else if (action === 'share') setNote(shareNotice(await shareLowStock(data)))
       else await downloadLowStock(data)
-    } catch {
+    } catch (err) {
       if (tab) tab.close()
-      setNote('Could not make the PDF. Check your connection and try again.')
+      setNote(errorText(err))
     }
     setBusy(false)
   }
@@ -518,18 +519,13 @@ export default function Inventory() {
   async function restore(product) {
     setRestoreError('')
     const { error } = await supabase.from('products').update({ is_active: true }).eq('id', product.id)
-    if (error) setRestoreError('Could not restore ' + product.name + ': ' + error.message)
+    if (error) setRestoreError('Could not restore ' + product.name + ': ' + errorText(error))
     else load()
   }
 
   useEffect(() => {
     load()
-    const channel = supabase
-      .channel('products-live')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, load)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'order_items' }, load)
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    return onTableChanges('products-live', ['products', 'order_items'], load)
   }, [])
 
   const products = all.filter((p) => p.is_active)

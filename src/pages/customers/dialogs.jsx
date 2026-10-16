@@ -3,6 +3,7 @@ import { supabase, selectAll } from '../../supabase'
 import Modal from '../../components/Modal'
 import { money, paymentMethods, today } from '../../format'
 import { downloadStatement, shareStatement, shareNotice, invoiceNumber } from '../../invoice'
+import { errorText } from '../../errors'
 
 // customer: a row from customer_balances (customer_id, name, owed, credit, ...)
 
@@ -27,7 +28,7 @@ export function CustomerPayment({ customer, onClose, onSaved }) {
       p_customer_id: customer.customer_id, p_amount: n, p_method: method, p_note: note || null,
     })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(errorText(error))
     onSaved(data)
   }
 
@@ -108,7 +109,7 @@ export function CustomerForm({ customer, others = [], onClose, onSaved }) {
       ? await supabase.from('customers').update(fields).eq('id', customer.customer_id).select('id').single()
       : await supabase.from('customers').insert(fields).select('id').single()
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(errorText(error))
     onSaved(data.id)
   }
 
@@ -167,7 +168,7 @@ export function OpeningBalanceForm({ customer, onClose, onSaved }) {
       p_customer_id: customer.customer_id, p_amount: n, p_as_of: asOf || null, p_note: note || null, p_due_date: dueDate || null,
     })
     setSaving(false)
-    if (error) return setError(error.message)
+    if (error) return setError(errorText(error))
     onSaved()
   }
 
@@ -236,8 +237,8 @@ export function StatementButtons({ row, onNote }) {
       const data = await statementData(row)
       if (share) onNote(shareNotice(await shareStatement(data)))
       else await downloadStatement(data)
-    } catch {
-      onNote('Could not make the statement. Check your connection and try again.')
+    } catch (err) {
+      onNote(errorText(err))
     }
     setBusy(false)
   }

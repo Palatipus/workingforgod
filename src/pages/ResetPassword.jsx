@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../supabase'
 import { useAuth } from '../AuthContext'
 import PasswordInput from '../components/PasswordInput'
+import { errorText } from '../errors'
 
 export default function ResetPassword() {
   const { setRecovering } = useAuth()
@@ -14,7 +15,7 @@ export default function ResetPassword() {
     setBusy(true)
     const { error } = await supabase.auth.updateUser({ password })
     if (error) {
-      setError(error.message)
+      setError(errorText(error))
       setBusy(false)
       return
     }
